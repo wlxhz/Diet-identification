@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import WebSocket
+import numpy as np
 
 from backend.models.schemas import (
     CaptureEvent,
@@ -18,13 +19,17 @@ from backend.models.schemas import (
     FoodTrack,
     FrameUpload,
     Guidance,
+    IntakeEvent,
     MeasurementQuality,
     Report,
     SessionState,
     VideoInfo,
 )
+from backend.services.calibration import ScaleMetadata
 from backend.services.analyzer import DecodedFrame, FoodAnalyzer
+from backend.services.consumption_tracker import ConsumptionTracker, summarize_confirmed_intake
 from backend.services.nutrition import cooking_method_for_key, nutrition_for_weight, profile_for_key
+from backend.services.utensil_tracker import detect_utensils
 
 
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -64,7 +69,9 @@ class SessionRecord:
         self.pending_frame: tuple[DecodedFrame, int, float] | None = None
         self.analysis_lock = asyncio.Lock()
         self.track_memory: dict[str, TrackAggregate] = {}
+        self.consumption_tracker = ConsumptionTracker()
         self.next_track_index = 1
+        self.intake_events: list[IntakeEvent] = []
         self.report: Report | None = None
         self.state = SessionState(
             session_id=session_id,
@@ -213,11 +220,53 @@ class SessionStore:
         record.state.model_name = self.analyzer.model_name
         record.state.analyzed_frame_count += 1
         record.state.foods = self._merge_tracks(record, foods, elapsed_seconds)
+        self._update_intake_events(record, decoded, frame_count)
         record.state.measurement_quality = self._merge_quality(quality, record.state.foods)
         if record.state.foods:
             guidance = self._temporal_guidance(record.state.foods, guidance)
         record.state.guidance = Guidance(message=guidance, needed_action=self._guidance_action(guidance))
         await self.broadcast(session_id, "frame_analyzed", {"state": record.state.model_dump(mode="json")})
+
+    def _update_intake_events(self, record: SessionRecord, decoded: DecodedFrame, frame_count: int) -> None:
+        if not record.state.foods:
+            return
+        arr = np.array(decoded.image)
+        utensils = detect_utensils(arr, record.state.foods)
+        scale = self._scale_from_foods(record.state.foods)
+        events = record.consumption_tracker.build_events(
+            timestamp_ms=frame_count,
+            foods=record.state.foods,
+            utensils=utensils,
+            scale=scale,
+        )
+        if events:
+            record.intake_events.extend(events)
+            del record.intake_events[:-80]
+        record.state.intake_events = record.intake_events[-50:]
+        record.state.utensil_event_count = len(record.intake_events)
+        confirmed = [event for event in record.intake_events if event.state == "intake_confirmed"]
+        record.state.confirmed_intake_event_count = len(confirmed)
+        record.state.confirmed_intake_weight_g = round(sum(event.estimated_bite_weight_g for event in confirmed), 1)
+        for aggregate in record.track_memory.values():
+            intake_weight, event_count = summarize_confirmed_intake(record.intake_events, aggregate.track_id)
+            aggregate.track.intake_weight_sum_g = intake_weight
+            aggregate.track.confirmed_intake_event_count = event_count
+            if event_count > 0:
+                aggregate.track.consumption_state = "decreasing"
+
+    @staticmethod
+    def _scale_from_foods(foods: list[FoodTrack]) -> ScaleMetadata | None:
+        for food in foods:
+            if food.reference_detected and food.scale_mm_per_px > 0:
+                return ScaleMetadata(
+                    detected=True,
+                    marker_id=food.reference_marker_id,
+                    mm_per_px=food.scale_mm_per_px,
+                    px_per_mm=round(1 / food.scale_mm_per_px, 3),
+                    confidence=food.scale_confidence,
+                    status="detected",
+                )
+        return None
 
     def _merge_tracks(self, record: SessionRecord, detections: list[FoodTrack], elapsed_seconds: float) -> list[FoodTrack]:
         matched_track_ids: set[str] = set()
@@ -335,11 +384,14 @@ class SessionStore:
         if self._scale_sample_is_usable(aggregate, detection, allow_rebase=True):
             self._remember_scale_sample(aggregate, detection)
             detection.scale_sample_count = len(aggregate.accepted_weight_samples)
-            detection.scale_confidence = self._scale_confidence(aggregate, detection)
-            detection.scale_status = "calibrating"
+            if detection.weight_source in {"aruco_calibrated", "container_model"}:
+                detection.scale_status = "stable"
+            else:
+                detection.scale_confidence = self._scale_confidence(aggregate, detection)
+                detection.scale_status = "calibrating"
         else:
             detection.scale_status = "needs_reference"
-            detection.scale_confidence = 0.12
+            detection.scale_confidence = min(detection.scale_confidence or 0.12, 0.24)
 
     def _scale_adjusted_measurement(
         self,
@@ -351,6 +403,20 @@ class SessionStore:
         detection.raw_weight_g = round(raw_weight, 1)
         aggregate.raw_weight_samples.append(raw_weight)
         del aggregate.raw_weight_samples[:-80]
+
+        if detection.weight_source in {"aruco_calibrated", "container_model"} and detection.reference_detected and detection.scale_confidence >= 0.55:
+            self._remember_scale_sample(aggregate, detection)
+            accepted_count = len(aggregate.accepted_weight_samples)
+            return {
+                "weight_g": round(raw_weight, 1),
+                "volume_ml": round(detection.volume_ml, 1),
+                "alpha": 0.62 if accepted_count < 4 else 0.50,
+                "confidence": round(max(detection.scale_confidence, detection.weight_confidence), 2),
+                "accepted_count": accepted_count,
+                "corrected": False,
+                "status": "stable" if accepted_count >= 2 else "calibrating",
+                "error_ratio": 0.028 if accepted_count >= 4 else 0.045,
+            }
 
         accepted = self._scale_sample_is_usable(aggregate, detection, allow_rebase=False)
         if accepted:
@@ -403,6 +469,8 @@ class SessionStore:
         raw_weight = detection.raw_weight_g or detection.estimated_weight_g
         if raw_weight <= 4:
             return False
+        if detection.weight_source in {"aruco_calibrated", "container_model"}:
+            return detection.reference_detected and detection.scale_confidence >= 0.55
         area_ratio = detection.area_ratio or self._bbox_area_ratio(detection.bbox)
         bbox_ratio = detection.bbox_area_ratio or self._bbox_area_ratio(detection.bbox)
         view_quality = detection.scale_view_quality or 0
@@ -623,8 +691,14 @@ class SessionStore:
             if any(food.scale_status == "too_far" for food in scale_corrected):
                 return "检测到主体占画面过小，当前克重已使用历史尺度基准校正；请让食物保持在画面中间并缓慢移动。"
             return "检测到视角尺度变化，当前克重已使用历史稳定帧校正；继续采集可进一步降低误差。"
+        calibrated = [food for food in foods if food.weight_source in {"aruco_calibrated", "container_model"}]
+        if calibrated:
+            utensil_tip = "；已开启餐具事件候选检测" if any(food.confirmed_intake_event_count for food in foods) else ""
+            return f"已检测到标定卡，当前克重使用真实尺度估算{utensil_tip}。请让标定卡与食物尽量保持完整入镜。"
         methods = [food.cooking_method_name for food in foods if food.cooking_method not in {"unknown", "raw_light"}]
         method_tip = f"，已识别烹饪方式：{'、'.join(sorted(set(methods)))}" if methods else ""
+        if all(food.weight_source == "visual_fallback" for food in foods):
+            return f"未检测到可用标定卡，当前克重为视觉粗估{method_tip}；放入 50mm ArUco 标定卡可提升估重稳定性。"
         if avg_convergence < 0.28:
             return f"已识别食物主体{method_tip}，正在积累视频帧；请保持连续推流，缓慢绕餐盘移动 5-10 秒。"
         if avg_error_ratio > 0.28:
@@ -657,6 +731,21 @@ class SessionStore:
                     "mask_svg_path": food.mask_svg_path,
                     "weight_g": food.estimated_weight_g,
                     "weight_error_g": food.weight_error_g,
+                    "weight_source": food.weight_source,
+                    "weight_estimation_level": food.weight_estimation_level,
+                    "reference_detected": food.reference_detected,
+                    "reference_marker_id": food.reference_marker_id,
+                    "scale_mm_per_px": food.scale_mm_per_px,
+                    "scale_confidence": food.scale_confidence,
+                    "area_cm2": food.area_cm2,
+                    "estimated_height_cm": food.estimated_height_cm,
+                    "shape_factor": food.shape_factor,
+                    "container_type": food.container_type,
+                    "container_confidence": food.container_confidence,
+                    "consumption_state": food.consumption_state,
+                    "remaining_ratio": food.remaining_ratio,
+                    "intake_weight_sum_g": food.intake_weight_sum_g,
+                    "confirmed_intake_event_count": food.confirmed_intake_event_count,
                     "volume_ml": food.volume_ml,
                     "calories_kcal": food.nutrition.calories_kcal,
                     "protein_g": food.nutrition.protein_g,
@@ -671,6 +760,22 @@ class SessionStore:
             ],
             scan_quality=record.state.measurement_quality.model_dump(),
             warnings=self._warnings(record.state),
+        )
+        totals.update(
+            {
+                "calibrated_weight_g": round(sum(food.estimated_weight_g for food in record.state.foods if food.weight_source in {"aruco_calibrated", "container_model"}), 1),
+                "rough_weight_g": round(sum(food.estimated_weight_g for food in record.state.foods if food.weight_source == "visual_fallback"), 1),
+                "total_intake_weight_g": record.state.confirmed_intake_weight_g,
+                "utensil_event_count": record.state.utensil_event_count,
+                "confirmed_intake_event_count": record.state.confirmed_intake_event_count,
+            }
+        )
+        report.meal_summary = totals
+        report.foods.append(
+            {
+                "item_type": "intake_events",
+                "events": [event.model_dump(mode="json") for event in record.state.intake_events],
+            }
         )
         record.report = report
         await self.broadcast(session_id, "measurement_completed", {"state": record.state.model_dump(mode="json"), "report": report.model_dump(mode="json")})
@@ -728,6 +833,10 @@ class SessionStore:
             warnings.append("视角覆盖不足，请补充侧面视角以提高估重稳定性。")
         if state.foods and sum(food.convergence for food in state.foods) / len(state.foods) < 0.5:
             warnings.append("采集时间较短，建议继续推流 5-10 秒让主体结果收敛。")
+        if state.foods and not any(food.weight_source in {"aruco_calibrated", "container_model"} for food in state.foods):
+            warnings.append("未检测到可用 ArUco 标定卡，本次克重为视觉粗估。")
+        if state.utensil_event_count and state.confirmed_intake_event_count == 0:
+            warnings.append("已检测到餐具接触候选，但尚未形成确认摄入事件；需要连续关键帧确认夹取路径。")
         if not warnings:
             warnings.append("第一版估重仅用于产品验证，不能替代精密称重。")
         return warnings

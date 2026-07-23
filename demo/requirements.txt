@@ -5,5 +5,5 @@ numpy>=1.26
 pillow>=10.0
 qrcode>=7.4
 cryptography>=42.0
-opencv-python-headless>=4.8
+opencv-contrib-python-headless>=4.8
 ultralytics>=8.3

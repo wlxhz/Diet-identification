@@ -148,12 +148,12 @@ function renderOverlay(nextState) {
 function renderFoods(foods) {
   qs("#foodRows").innerHTML = foods.map((food) => `
     <tr class="${food.state === "lost" ? "lost-row" : ""}">
-      <td>${food.name}<small>${food.category} · ${food.state === "lost" ? "短暂丢失" : "主体跟踪"}</small></td>
+      <td>${food.name}<small>${food.category} · ${food.state === "lost" ? "短暂丢失" : "主体跟踪"} · ${food.container_type || "none"}</small></td>
       <td>${food.cooking_method_name || "未识别"}<small>${Math.round((food.cooking_confidence || 0) * 100)}%</small></td>
-      <td><strong>${food.estimated_weight_g}g</strong><small>±${food.weight_error_g}g</small></td>
+      <td><strong>${food.estimated_weight_g}g</strong><small>±${food.weight_error_g}g · ${food.weight_estimation_level || "rough"}</small></td>
       <td>
-        <span class="scale-badge ${food.scale_corrected ? "corrected" : ""}">${scaleStatusLabels[food.scale_status] || "校准中"}</span>
-        <small>${Math.round((food.scale_confidence || 0) * 100)}% · 原始 ${Math.round(food.raw_weight_g || food.estimated_weight_g)}g</small>
+        <span class="scale-badge ${food.reference_detected ? "corrected" : ""}">${food.weight_source === "visual_fallback" ? "粗估" : "标定卡"}</span>
+        <small>${Math.round((food.scale_confidence || 0) * 100)}% · ${food.area_cm2 ? `${food.area_cm2}cm²` : `原始 ${Math.round(food.raw_weight_g || food.estimated_weight_g)}g`}</small>
       </td>
       <td>${food.nutrition.calories_kcal}kcal</td>
       <td>${food.nutrition.protein_g}g</td>
@@ -161,7 +161,7 @@ function renderFoods(foods) {
       <td>${food.nutrition.fat_g}g</td>
       <td>${food.sample_count || food.visible_frames || 1}</td>
       <td>${Math.round((food.convergence || 0) * 100)}%</td>
-      <td>${Math.round(food.weight_confidence * 100)}%</td>
+      <td>${Math.round(food.weight_confidence * 100)}%<small>${food.confirmed_intake_event_count || 0} 次摄入</small></td>
     </tr>
   `).join("");
 }

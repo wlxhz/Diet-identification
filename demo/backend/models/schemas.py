@@ -16,6 +16,19 @@ SessionStatus = Literal[
     "error",
 ]
 
+WeightSource = Literal["aruco_calibrated", "container_model", "visual_fallback", "unknown"]
+EstimationLevel = Literal["calibrated", "approximate", "rough", "unsupported"]
+UtensilType = Literal["chopsticks", "spoon", "fork", "hand", "unknown"]
+IntakeState = Literal[
+    "utensil_detected",
+    "utensil_contact_food",
+    "food_lifted",
+    "moving_to_mouth",
+    "intake_confirmed",
+    "returned_to_plate",
+    "uncertain",
+]
+
 
 class DeviceInfo(BaseModel):
     platform: str = "android"
@@ -75,6 +88,23 @@ class FoodTrack(BaseModel):
     scale_confidence: float = 0
     scale_sample_count: int = 0
     scale_status: str = "calibrating"
+    reference_detected: bool = False
+    reference_type: str = "none"
+    reference_marker_id: int | None = None
+    scale_mm_per_px: float = 0
+    weight_source: WeightSource = "visual_fallback"
+    weight_estimation_level: EstimationLevel = "rough"
+    area_cm2: float = 0
+    estimated_height_cm: float = 0
+    shape_factor: float = 0
+    container_type: str = "none"
+    container_confidence: float = 0
+    occlusion_score: float = 0
+    consumption_state: str = "observing"
+    remaining_ratio: float | None = None
+    intake_weight_sum_g: float = 0
+    confirmed_intake_event_count: int = 0
+    last_intake_event_at: int | None = None
     state: str = "tracking"
     bbox: list[int]
     polygon: list[list[int]] = Field(default_factory=list)
@@ -104,7 +134,34 @@ class MeasurementQuality(BaseModel):
     lighting: float = 0
     blur: float = 0
     plate_visibility: float = 0
+    reference_visibility: float = 0
+    scale_quality: float = 0
+    container_visibility: float = 0
+    calibrated_frame_ratio: float = 0
+    utensil_visibility: float = 0
+    intake_event_quality: float = 0
     overall: float = 0
+
+
+class IntakeEvent(BaseModel):
+    event_id: str
+    state: IntakeState
+    utensil_type: UtensilType = "unknown"
+    source_track_id: str | None = None
+    source_profile_key: str = "unknown_food"
+    source_confidence: float = 0
+    mixed_sources: list[dict[str, Any]] = Field(default_factory=list)
+    estimated_bite_weight_g: float = 0
+    bite_weight_error_g: float = 0
+    bite_area_cm2: float = 0
+    bite_volume_ml: float = 0
+    weight_source: WeightSource = "visual_fallback"
+    reference_detected: bool = False
+    scale_confidence: float = 0
+    trajectory_confidence: float = 0
+    intake_confidence: float = 0
+    started_at_ms: int
+    confirmed_at_ms: int | None = None
 
 
 class VideoInfo(BaseModel):
@@ -136,6 +193,10 @@ class SessionState(BaseModel):
     video: VideoInfo = Field(default_factory=VideoInfo)
     measurement_quality: MeasurementQuality = Field(default_factory=MeasurementQuality)
     foods: list[FoodTrack] = Field(default_factory=list)
+    intake_events: list[IntakeEvent] = Field(default_factory=list)
+    confirmed_intake_weight_g: float = 0
+    utensil_event_count: int = 0
+    confirmed_intake_event_count: int = 0
     guidance: Guidance = Field(default_factory=Guidance)
     latest_frame_url: str | None = None
     device: DeviceInfo | None = None

@@ -1,0 +1,17 @@
+-r requirements.txt
+
+# Test and smoke validation
+pytest>=8.0
+pytest-asyncio>=0.23
+requests>=2.32
+
+# Marker calibration and CV diagnostics.
+# opencv-contrib provides cv2.aruco, which is needed for ArUco marker based scale calibration.
+opencv-contrib-python-headless>=4.8
+
+# Dataset inspection, metrics, and training-data reports
+pandas>=2.2
+scikit-learn>=1.4
+matplotlib>=3.8
+tqdm>=4.66
+PyYAML>=6.0

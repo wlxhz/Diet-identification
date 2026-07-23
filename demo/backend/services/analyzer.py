@@ -11,7 +11,10 @@ import numpy as np
 from PIL import Image, ImageFilter, ImageStat
 
 from backend.models.schemas import FoodTrack, MeasurementQuality
+from backend.services.calibration import ScaleMetadata, detect_scale_marker
+from backend.services.container_detector import ContainerObservation, detect_container
 from backend.services.nutrition import FoodProfile, cooking_method_for_key, nutrition_for_weight, profile_for_key
+from backend.services.volume_estimator import estimate_weight
 
 
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
@@ -219,20 +222,23 @@ class FoodAnalyzer:
         return DecodedFrame(image=image, width=image.width, height=image.height, jpg_bytes=jpg_bytes)
 
     def analyze(self, frame: DecodedFrame, frame_count: int, elapsed_seconds: float) -> tuple[list[FoodTrack], MeasurementQuality, str]:
+        arr = np.array(frame.image)
+        scale = detect_scale_marker(arr)
+        container = detect_container(arr, scale)
         if self.model is not None:
             try:
-                tracks = self._analyze_yolo(frame)
+                tracks = self._analyze_yolo(frame, scale, container)
                 if tracks:
-                    quality = self._quality(frame, tracks, frame_count, elapsed_seconds)
+                    quality = self._quality(frame, tracks, frame_count, elapsed_seconds, scale, container)
                     return tracks, quality, self._guidance(quality, len(tracks))
             except Exception:
                 pass
 
-        tracks = self._analyze_fallback(frame, frame_count)
-        quality = self._quality(frame, tracks, frame_count, elapsed_seconds)
+        tracks = self._analyze_fallback(frame, frame_count, scale, container)
+        quality = self._quality(frame, tracks, frame_count, elapsed_seconds, scale, container)
         return tracks, quality, self._guidance(quality, len(tracks))
 
-    def _analyze_yolo(self, frame: DecodedFrame) -> list[FoodTrack]:
+    def _analyze_yolo(self, frame: DecodedFrame, scale: ScaleMetadata | None = None, container: ContainerObservation | None = None) -> list[FoodTrack]:
         result = self.model.predict(np.array(frame.image), imgsz=640, conf=0.25, verbose=False)[0]
         tracks: list[FoodTrack] = []
         boxes = getattr(result, "boxes", None)
@@ -281,6 +287,8 @@ class FoodAnalyzer:
                     area_px=area_px,
                     cooking_method=cooking_method,
                     cooking_confidence=cooking_confidence,
+                    scale=scale,
+                    container=container,
                 )
             )
         return tracks[:6]
@@ -309,7 +317,7 @@ class FoodAnalyzer:
             return False
         return any(label == blocked or blocked in label for blocked in YOLO_NON_FOOD_LABELS)
 
-    def _analyze_fallback(self, frame: DecodedFrame, frame_count: int) -> list[FoodTrack]:
+    def _analyze_fallback(self, frame: DecodedFrame, frame_count: int, scale: ScaleMetadata | None = None, container: ContainerObservation | None = None) -> list[FoodTrack]:
         arr = np.array(frame.image)
         height, width = arr.shape[:2]
         if self._looks_like_non_food_scene(arr):
@@ -368,6 +376,8 @@ class FoodAnalyzer:
                     area_px=component.area_px,
                     cooking_method=component.cooking_method,
                     cooking_confidence=component.cooking_confidence,
+                    scale=scale,
+                    container=container,
                 )
             )
         return tracks
@@ -1135,6 +1145,8 @@ class FoodAnalyzer:
         area_px: int | None = None,
         cooking_method: str = "unknown",
         cooking_confidence: float = 0,
+        scale: ScaleMetadata | None = None,
+        container: ContainerObservation | None = None,
     ) -> FoodTrack:
         x1, y1, x2, y2 = bbox
         bbox_area_px = max(1, (x2 - x1) * (y2 - y1))
@@ -1151,17 +1163,24 @@ class FoodAnalyzer:
         not_clipped = max(0.0, min(1.0, margin_ratio / 0.035))
         scale_view_quality = round(max(0.05, min(1.0, not_too_close * 0.42 + not_too_tiny * 0.22 + not_clipped * 0.20 + centered * 0.16)), 2)
 
-        # Use mask area as the 2D footprint. A square-root compactness term keeps
-        # small foods from collapsing to zero while preventing huge bboxes from
-        # becoming huge weights.
-        plate_scale_ml = 980
-        compactness = min(1.06, max(0.48, math.sqrt(area_ratio) * 2.05))
-        volume_ml = round(max(8, area_ratio * plate_scale_ml * compactness), 1)
-        estimated_weight = round(volume_ml * profile.density_g_per_ml, 1)
-        relative_error = min(0.56, 0.18 + profile.density_std_g_per_ml / max(profile.density_g_per_ml, 0.1) + (1 - confidence) * 0.24)
-        weight_error = round(max(5, estimated_weight * relative_error), 1)
-        weight_confidence = round(max(0.2, min(0.88, confidence * (1 - relative_error * 0.32))), 2)
-        volume_confidence = round(max(0.2, min(0.86, confidence * 0.84)), 2)
+        container_type = container.type if container and container.confidence >= 0.34 else "none"
+        container_confidence = container.confidence if container else 0.0
+        estimate = estimate_weight(
+            mask_area_px=true_area_px,
+            bbox_area_px=bbox_area_px,
+            frame_area_px=frame_area,
+            profile=profile,
+            food_confidence=confidence,
+            scale=scale,
+            mask_confidence=confidence,
+            container_type=container_type,
+            container_confidence=container_confidence,
+        )
+        volume_ml = estimate.volume_ml
+        estimated_weight = estimate.weight_g
+        weight_error = estimate.weight_error_g
+        weight_confidence = estimate.confidence
+        volume_confidence = round(max(0.2, min(0.90, estimate.confidence * 0.88)), 2)
         cooking = cooking_method_for_key(cooking_method)
         display_name = (
             profile.display_name
@@ -1181,9 +1200,21 @@ class FoodAnalyzer:
             bbox_area_ratio=round(bbox_area_ratio, 4),
             scale_view_quality=scale_view_quality,
             scale_corrected=False,
-            scale_confidence=round(scale_view_quality * 0.28, 2),
-            scale_sample_count=1,
-            scale_status="calibrating",
+            scale_confidence=round(scale.confidence, 2) if scale and scale.detected else round(scale_view_quality * 0.18, 2),
+            scale_sample_count=1 if scale and scale.usable else 0,
+            scale_status="stable" if scale and scale.usable else "needs_reference",
+            reference_detected=bool(scale and scale.detected),
+            reference_type="aruco" if scale and scale.detected else "none",
+            reference_marker_id=scale.marker_id if scale and scale.detected else None,
+            scale_mm_per_px=round(scale.mm_per_px, 6) if scale and scale.usable else 0,
+            weight_source=estimate.weight_source,
+            weight_estimation_level=estimate.estimation_level,
+            area_cm2=estimate.area_cm2,
+            estimated_height_cm=estimate.estimated_height_cm,
+            shape_factor=estimate.shape_factor,
+            container_type=container_type,
+            container_confidence=round(container_confidence, 2),
+            occlusion_score=round(max(0.0, min(0.65, 1 - not_clipped)), 2),
             bbox=bbox,
             polygon=polygon,
             mask_svg_path=self._polygon_path(polygon),
@@ -1198,7 +1229,15 @@ class FoodAnalyzer:
             nutrition=nutrition_for_weight(profile, estimated_weight, cooking_method),
         )
 
-    def _quality(self, frame: DecodedFrame, tracks: list[FoodTrack], frame_count: int, elapsed_seconds: float) -> MeasurementQuality:
+    def _quality(
+        self,
+        frame: DecodedFrame,
+        tracks: list[FoodTrack],
+        frame_count: int,
+        elapsed_seconds: float,
+        scale: ScaleMetadata | None = None,
+        container: ContainerObservation | None = None,
+    ) -> MeasurementQuality:
         grayscale = frame.image.convert("L")
         stat = ImageStat.Stat(grayscale)
         brightness = stat.mean[0] / 255
@@ -1223,6 +1262,10 @@ class FoodAnalyzer:
             lighting=round(lighting, 2),
             blur=round(blur, 2),
             plate_visibility=round(plate_visibility, 2),
+            reference_visibility=round(scale.marker_area_ratio * 18, 2) if scale and scale.detected else 0,
+            scale_quality=round(scale.confidence, 2) if scale else 0,
+            container_visibility=round(container.confidence, 2) if container else 0,
+            calibrated_frame_ratio=1.0 if any(food.weight_source in {"aruco_calibrated", "container_model"} for food in tracks) else 0.0,
             overall=round(float(overall), 2),
         )
 
