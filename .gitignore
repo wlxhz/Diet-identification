@@ -15,14 +15,19 @@ env/
 *.pfx
 
 /models/
-/demo/models/
+/demo/models/*
 *.pt
 *.pth
 *.onnx
 *.pkl
 *.joblib
+!demo/models/food_seg_v1.pt
 
 outputs/
 .pytest_cache/
 .DS_Store
 Thumbs.db
+
+# Training data and outputs
+datasets/
+training/runs/

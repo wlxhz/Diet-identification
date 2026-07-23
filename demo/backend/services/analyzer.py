@@ -15,7 +15,7 @@ from backend.services.nutrition import FoodProfile, cooking_method_for_key, nutr
 
 
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
-DEFAULT_MODEL_PATH = MODEL_DIR / "yolo11n-seg.pt"
+DEFAULT_MODEL_PATH = MODEL_DIR / "food_seg_v1.pt"
 
 DESSERT_SNACK_KEYS = {
     "cake",
@@ -112,6 +112,48 @@ YOLO_NON_FOOD_LABELS = {
 }
 
 GENERIC_FOOD_LABEL_WORDS = {"food", "meal", "dish", "snack", "dessert", "ingredient"}
+
+FOODSEG103_LABEL_MAP: dict[str, str] = {
+    "candy": "candy", "egg tart": "egg_tart", "french fries": "chips",
+    "chocolate": "chocolate", "biscuit": "biscuit", "popcorn": "packaged_snack",
+    "pudding": "cake", "ice cream": "cream_cake", "cheese butter": "dried_tofu",
+    "cake": "cake", "wine": "unknown_food", "milkshake": "unknown_food",
+    "coffee": "unknown_food", "juice": "unknown_food", "milk": "soybean",
+    "tea": "unknown_food", "almond": "packaged_snack", "red beans": "soybean",
+    "cashew": "packaged_snack", "dried cranberries": "packaged_snack",
+    "soy": "soybean", "walnut": "packaged_snack", "peanut": "packaged_snack",
+    "egg": "egg", "apple": "apple", "date": "apple", "apricot": "apple",
+    "avocado": "apple", "banana": "banana", "strawberry": "apple",
+    "cherry": "apple", "blueberry": "apple", "raspberry": "apple",
+    "mango": "watermelon", "olives": "packaged_snack", "peach": "apple",
+    "lemon": "orange", "pear": "apple", "fig": "apple",
+    "pineapple": "watermelon", "grape": "apple", "kiwi": "apple",
+    "melon": "watermelon", "orange": "orange", "watermelon": "watermelon",
+    "steak": "beef", "pork": "pork_lean", "chicken duck": "chicken",
+    "sausage": "pork_belly", "fried meat": "pork_belly", "lamb": "lamb",
+    "sauce": "unknown_food", "crab": "shrimp", "fish": "fish",
+    "shellfish": "shrimp", "shrimp": "shrimp", "soup": "porridge",
+    "bread": "bread", "corn": "corn", "hamburg": "bread",
+    "pizza": "fried_rice", "hanamaki baozi": "steamed_bun",
+    "wonton dumplings": "dumpling", "pasta": "wheat_noodles",
+    "noodles": "wheat_noodles", "rice": "rice", "pie": "cake",
+    "tofu": "tofu", "eggplant": "eggplant", "potato": "potato",
+    "garlic": "onion", "cauliflower": "cauliflower", "tomato": "tomato",
+    "kelp": "unknown_food", "seaweed": "unknown_food",
+    "spring onion": "onion", "rape": "bok_choy", "ginger": "unknown_food",
+    "okra": "green_bean", "lettuce": "lettuce", "pumpkin": "pumpkin",
+    "cucumber": "cucumber", "white radish": "bok_choy", "carrot": "carrot",
+    "asparagus": "celery", "bamboo shoots": "bamboo_shoot",
+    "broccoli": "broccoli", "celery stick": "celery",
+    "cilantro mint": "bok_choy", "snow peas": "snow_pea",
+    "cabbage": "cabbage", "bean sprouts": "bean_sprout",
+    "onion": "onion", "pepper": "bell_pepper",
+    "green beans": "green_bean", "French beans": "green_bean",
+    "king oyster mushroom": "mushroom", "shiitake": "shiitake",
+    "enoki mushroom": "enoki", "oyster mushroom": "mushroom",
+    "white button mushroom": "mushroom", "salad": "stir_fried_greens",
+    "other ingredients": "unknown_food",
+}
 
 
 @dataclass
@@ -244,28 +286,17 @@ class FoodAnalyzer:
         return tracks[:6]
 
     def _profile_from_label(self, label: str, index: int) -> FoodProfile:
-        label_map = {
-            "rice": "rice",
-            "broccoli": "broccoli",
-            "banana": "banana",
-            "apple": "apple",
-            "orange": "orange",
-            "carrot": "carrot",
-            "hot dog": "unknown_food",
-            "sandwich": "bread",
-            "pizza": "fried_rice",
-            "cake": "cake",
-            "donut": "cookie",
-            "cookie": "cookie",
-            "biscuit": "biscuit",
-            "cracker": "cracker",
-            "bread": "bread",
-        }
-        for needle, key in label_map.items():
-            if needle in label:
-                return profile_for_key(key)
-        fallback = ["unknown_food", "rice", "broccoli", "egg", "tofu", "pork_lean", "potato"]
-        return profile_for_key(fallback[index % len(fallback)])
+        key = FOODSEG103_LABEL_MAP.get(label)
+        if key:
+            return profile_for_key(key)
+        lower = label.lower()
+        key = FOODSEG103_LABEL_MAP.get(lower)
+        if key:
+            return profile_for_key(key)
+        for needle, mapped_key in FOODSEG103_LABEL_MAP.items():
+            if needle in lower:
+                return profile_for_key(mapped_key)
+        return profile_for_key("unknown_food")
 
     @staticmethod
     def _yolo_label_is_non_food(label: str) -> bool:
