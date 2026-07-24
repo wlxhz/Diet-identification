@@ -28,6 +28,22 @@ outputs/
 .DS_Store
 Thumbs.db
 
+# Health app runtime data and local builds
+health_diet_app/.health-session-secret
+health_diet_app/health.db
+health_diet_app/*.db
+health_diet_app/*.apk
+health_diet_app/static/uploads/avatars/*
+!health_diet_app/static/uploads/avatars/.gitkeep
+health_diet_app/android/local.properties
+health_diet_app/android/.gradle/
+health_diet_app/android/**/build/
+
+# Rokid runtime logs and local captures
+*.log
+*logcat*.txt
+rokid_camera_link_demo/static/uploads/
+
 # Training data and outputs
 datasets/
 training/runs/

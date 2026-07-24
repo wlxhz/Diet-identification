@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+{% block title %}饮食看板 - 健康饮食{% endblock %}
+
+{% block hero %}
+<div class="hero-banner">
+    <span class="hero-icon"><i data-lucide="utensils-crossed" style="width:40px;height:40px;"></i></span>
+    <div class="greeting">饮食看板</div>
+    <h1>记录每一餐</h1>
+    <p class="subtitle">手动记录 · 准确计算 · 清晰回顾</p>
+</div>
+{% endblock %}
+
+{% block content %}
+
+{% set today_cal = namespace(v=0) %}
+{% set today_count = namespace(v=0) %}
+{% for r in records %}
+    {% if r.intake_time and r.intake_time[:10] == now.strftime('%Y-%m-%d') %}
+        {% set today_cal.v = today_cal.v + r.calories %}
+        {% set today_count.v = today_count.v + 1 %}
+    {% endif %}
+{% endfor %}
+
+<div class="card card-accent-top">
+    <h2><i data-lucide="bar-chart-3" class="icon-md"></i>今日饮食概览</h2>
+    <div class="stats" style="margin-bottom:0;">
+        <div class="stat-card green">
+            <div class="stat-icon"><i data-lucide="utensils"></i></div>
+            <div class="stat-value">{{ today_count.v }}</div>
+            <div class="stat-label">已记录餐次</div>
+        </div>
+        <div class="stat-card orange">
+            <div class="stat-icon"><i data-lucide="flame"></i></div>
+            <div class="stat-value">{{ "%.0f"|format(today_cal.v) }}</div>
+            <div class="stat-label">今日摄入 kcal</div>
+        </div>
+        <div class="stat-card blue">
+            <div class="stat-icon"><i data-lucide="clock"></i></div>
+            <div class="stat-value">{{ now.strftime('%H:%M') }}</div>
+            <div class="stat-label">当前时间</div>
+        </div>
+    </div>
+</div>
+
+<div class="tabs">
+    <div class="tab active" onclick="switchTab('record')"><i data-lucide="camera" class="icon-sm"></i>记录饮食</div>
+    <div class="tab" onclick="switchTab('history')"><i data-lucide="list" class="icon-sm"></i>历史记录</div>
+</div>
+
+<div id="tab-record" class="tab-content active">
+
+    <div class="card" style="text-align:center;">
+        <h2><i data-lucide="scan-eye" class="icon-md"></i>智能眼镜识别</h2>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:16px;">通过 Rokid AI App 与 CXR-L 配对 RV101，照片只来自眼镜摄像头。系统会将眼镜 JPEG 发送到电脑识别服务，结果仅作参考，保存前请确认。</p>
+
+        <div id="rokidControls" style="display:none;max-width:620px;margin:0 auto 18px;text-align:left;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--green-lighter);">
+            <div style="font-weight:700;margin-bottom:10px;"><i data-lucide="glasses" class="icon-sm"></i> Rokid Glasses RV101</div>
+            <div class="form-group" style="margin-bottom:10px;">
+                <label>电脑识别服务地址</label>
+                <input id="rokidServerUrl" type="url" inputmode="url" placeholder="http://192.168.1.100:9088">
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-primary btn-sm" type="button" onclick="connectRokid()"><i data-lucide="bluetooth" class="icon-sm"></i> 授权并连接眼镜</button>
+                <button class="btn btn-secondary btn-sm" type="button" id="rokidCaptureButton" onclick="captureRokid()" disabled><i data-lucide="camera" class="icon-sm"></i> 眼镜拍照</button>
+                <button class="btn btn-secondary btn-sm" type="button" id="rokidStartButton" onclick="startRokidScan()" disabled><i data-lucide="play" class="icon-sm"></i> 开始低频采集</button>
+                <button class="btn btn-secondary btn-sm" type="button" id="rokidStopButton" onclick="stopRokidScan()" disabled><i data-lucide="square" class="icon-sm"></i> 停止</button>
+            </div>
+            <div id="rokidState" style="font-size:12px;color:var(--text2);margin-top:10px;">等待连接 Rokid AI App</div>
+        </div>
+
+        <div id="cameraArea">
+            <div class="viewfinder">
+                <div class="corner tl"></div><div class="corner tr"></div>
+                <div class="corner bl"></div><div class="corner br"></div>
+                <div class="scan-line"></div>
+                <img id="scanPreview" alt="待识别食物预览" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:inherit;">
+                <div class="vf-text" id="viewfinderText">让餐盘完整入镜，保持光线充足</div>
+            </div>
+            <input id="scanFile" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+            <button class="btn btn-primary btn-lg" type="button" id="scanButton" onclick="document.getElementById('scanFile').click()" style="margin-top:16px;">
+                <i data-lucide="image" class="icon-sm"></i> 电脑浏览器调试：选择图片
+            </button>
+        </div>
+
+        <div id="scanResult" style="display:none;padding:24px;">
+            <div id="scanSpinner" style="margin-bottom:14px;color:var(--green);"><i data-lucide="loader" style="width:40px;height:40px;animation:spin 1.5s linear infinite;"></i></div>
+            <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+            <p id="scanStatus" style="color:var(--text2);font-weight:500;">AI 视觉分析中...</p>
+            <div class="progress-bar" style="max-width:360px;margin:16px auto;">
+                <div class="progress-fill progress-green" id="scanProgress" style="width:0%;"></div>
+            </div>
+            <p id="scanText" style="font-size:13px;color:var(--text3);margin-top:10px;"></p>
+            <div id="recognizedFoods" style="display:grid;gap:10px;margin-top:16px;text-align:left;"></div>
+        </div>
+    </div>
+
+    <div class="card card-accent-top" id="resultCard">
+        <h2><i data-lucide="notebook-pen" class="icon-md"></i>记录饮食</h2>
+        <form method="POST" action="/diet/record">
+            <div class="form-group">
+                <label><i data-lucide="chevron-down" class="icon-sm"></i> 食物</label>
+                <select name="food_name" id="foodSelect" required>
+                    <option value="">选择食物</option>
+                    {% for f in foods %}
+                    <option value="{{ f.name }}">{{ f.name }}（{{ f.calories_per_100g }} kcal/100g）</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label><i data-lucide="weight" class="icon-sm"></i> 克重（g）</label>
+                <input type="number" name="weight_grams" id="weightInput" placeholder="例如: 200" step="0.5" min="0.5" max="5000" required>
+            </div>
+            <div class="form-group">
+                <label><i data-lucide="clock" class="icon-sm"></i> 摄入时间</label>
+                <input type="datetime-local" name="intake_time" value="{{ now.strftime('%Y-%m-%dT%H:%M') }}">
+            </div>
+            <button type="submit" class="btn btn-primary btn-lg btn-block"><i data-lucide="check" class="icon-sm"></i> 确认记录</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2><i data-lucide="zap" class="icon-md"></i>快捷添加</h2>
+        <p style="font-size:12px;color:var(--text3);margin-bottom:14px;">点击常用食物快速填入</p>
+        <div class="action-grid">
+            <div class="action-item" onclick="quickFood('白米饭', 200)"><span class="action-icon"><i data-lucide="rice"></i></span><span class="action-label">白米饭 200g</span></div>
+            <div class="action-item" onclick="quickFood('鸡胸肉', 150)"><span class="action-icon"><i data-lucide="drumstick"></i></span><span class="action-label">鸡胸肉 150g</span></div>
+            <div class="action-item" onclick="quickFood('鸡蛋', 100)"><span class="action-icon"><i data-lucide="egg"></i></span><span class="action-label">鸡蛋 100g</span></div>
+            <div class="action-item" onclick="quickFood('牛奶', 250)"><span class="action-icon"><i data-lucide="milk"></i></span><span class="action-label">牛奶 250g</span></div>
+            <div class="action-item" onclick="quickFood('苹果', 200)"><span class="action-icon"><i data-lucide="apple"></i></span><span class="action-label">苹果 200g</span></div>
+            <div class="action-item" onclick="quickFood('西兰花', 150)"><span class="action-icon"><i data-lucide="leafy-green"></i></span><span class="action-label">西兰花 150g</span></div>
+        </div>
+    </div>
+</div>
+
+<div id="tab-history" class="tab-content">
+    {% if records %}
+    <div class="card">
+        <h2><i data-lucide="list" class="icon-md"></i>饮食时间线</h2>
+        <div class="timeline">
+        {% set last_date = namespace(v='') %}
+        {% for r in records %}
+            {% set rdate = r.intake_time[:10] if r.intake_time else '' %}
+            {% if rdate != last_date.v %}
+                {% set last_date.v = rdate %}
+                <div style="margin:16px 0 8px;font-weight:700;font-size:13px;color:var(--green);">{{ rdate }}</div>
+            {% endif %}
+            <div class="timeline-item">
+                <div class="time-label">{{ r.intake_time[11:16] if r.intake_time and r.intake_time|length >= 16 else '' }}</div>
+                <div class="time-card" style="display:flex;align-items:center;gap:14px;">
+                    <span class="set-icon" style="background:var(--green-lighter);flex-shrink:0;"><i data-lucide="utensils" style="color:var(--green);"></i></span>
+                    <div style="flex:1;">
+                        <strong style="font-size:14px;">{{ r.food_name }}</strong>
+                        <div style="font-size:12px;color:var(--text2);margin-top:2px;">
+                            <span class="badge badge-{{ 'blue' if r.role=='supervisor' else 'pink' }}" style="font-size:10px;">{{ r.nickname }}</span>
+                            &nbsp;{{ "%.0f"|format(r.weight_grams) }}g · <strong style="color:var(--green);">{{ "%.1f"|format(r.calories) }} kcal</strong>
+                        </div>
+                    </div>
+                    {% if r.user_id == user.id %}
+                    <form method="POST" action="/diet/delete/{{ r.id }}" style="flex-shrink:0;" onsubmit="return confirm('确定删除？')">
+                        <button class="btn btn-danger btn-sm"><i data-lucide="trash-2" class="icon-sm"></i></button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+        {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <div class="empty">
+        <div class="empty-icon"><i data-lucide="utensils-crossed"></i></div>
+        <p style="font-size:16px;font-weight:500;margin-bottom:6px;">暂无饮食记录</p>
+        <p style="font-size:13px;color:var(--text3);">点击上方「记录饮食」开始你的第一餐</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+    document.querySelector('.tab:nth-child('+(name==='record'?'1':'2')+')').classList.add('active');
+    document.getElementById('tab-'+name).classList.add('active');
+    lucide.createIcons();
+}
+
+function quickFood(name, weight) {
+    var sel = document.getElementById('foodSelect');
+    for (var i=0; i<sel.options.length; i++) {
+        if (sel.options[i].value === name) { sel.selectedIndex = i; break; }
+    }
+    document.getElementById('weightInput').value = weight;
+    document.getElementById('resultCard').style.display = 'block';
+    document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
+    lucide.createIcons();
+}
+
+function showScanError(message) {
+    document.getElementById('scanSpinner').style.display = 'none';
+    document.getElementById('scanStatus').textContent = '识别未完成';
+    document.getElementById('scanStatus').style.color = 'var(--danger, #c0392b)';
+    document.getElementById('scanText').textContent = message;
+    document.getElementById('scanProgress').style.width = '0%';
+}
+
+function applyRecognition(food) {
+    if (!food || !food.record_food_name) return;
+    quickFood(food.record_food_name, Math.max(0.5, Number(food.estimated_weight_g || 0).toFixed(1)));
+}
+
+function renderRecognizedFoods(foods) {
+    var container = document.getElementById('recognizedFoods');
+    container.innerHTML = '';
+    foods.forEach(function(food, index) {
+        var card = document.createElement('div');
+        card.style.cssText = 'padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--surface,#fff);';
+        var title = document.createElement('strong');
+        title.textContent = food.name || '未知食物';
+        var detail = document.createElement('div');
+        detail.style.cssText = 'font-size:12px;color:var(--text2);margin-top:4px;';
+        detail.textContent = (Number(food.estimated_weight_g || 0).toFixed(1) + 'g · ' +
+            Number((food.nutrition || {}).calories_kcal || 0).toFixed(1) + ' kcal · 置信度 ' +
+            Math.round(Number(food.confidence || 0) * 100) + '%');
+        card.appendChild(title);
+        card.appendChild(detail);
+        if (food.available_for_record) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn-secondary btn-sm';
+            button.style.marginTop = '9px';
+            button.textContent = '填入记录：' + food.record_food_name;
+            button.addEventListener('click', function() { applyRecognition(food); });
+            card.appendChild(button);
+        } else {
+            var note = document.createElement('div');
+            note.style.cssText = 'font-size:11px;color:var(--text3);margin-top:7px;';
+            note.textContent = '食物库暂无对应项，请手动选择最接近的食物。';
+            card.appendChild(note);
+        }
+        container.appendChild(card);
+        if (index === 0 && food.available_for_record) applyRecognition(food);
+    });
+    lucide.createIcons();
+}
+
+function handleRecognitionPayload(payload) {
+    if (!payload || !payload.ok) throw new Error((payload && payload.error) || '识别服务返回异常');
+    document.getElementById('scanSpinner').style.display = 'none';
+    document.getElementById('scanProgress').style.width = '100%';
+    if (!payload.foods || !payload.foods.length) {
+        document.getElementById('scanStatus').textContent = '未识别到明确的食物主体';
+        document.getElementById('scanText').textContent = payload.guidance || '请让食物占据画面中央后重试。';
+        return;
+    }
+    document.getElementById('scanStatus').textContent = '识别完成';
+    document.getElementById('scanStatus').style.color = 'var(--text2)';
+    document.getElementById('scanText').textContent =
+        '共识别 ' + payload.foods.length + ' 项 · 画面质量 ' +
+        Math.round(Number((payload.quality || {}).overall || 0) * 100) + '% · ' +
+        (payload.guidance || '请确认后记录');
+    renderRecognizedFoods(payload.foods);
+}
+
+function prepareRokidScan(message) {
+    document.getElementById('scanResult').style.display = 'block';
+    document.getElementById('scanSpinner').style.display = 'block';
+    document.getElementById('scanStatus').textContent = '等待 RV101 照片...';
+    document.getElementById('scanStatus').style.color = 'var(--text2)';
+    document.getElementById('scanText').textContent = message;
+    document.getElementById('scanProgress').style.width = '45%';
+    document.getElementById('recognizedFoods').innerHTML = '';
+    lucide.createIcons();
+}
+
+function saveRokidServer() {
+    var value = document.getElementById('rokidServerUrl').value.trim();
+    if (!window.RokidGlasses.setServerUrl(value)) {
+        throw new Error('请输入完整地址，例如 http://192.168.1.100:9088');
+    }
+}
+
+function connectRokid() {
+    try {
+        saveRokidServer();
+        window.RokidGlasses.requestAuthorizationAndConnect();
+    } catch (error) {
+        showScanError(error.message);
+    }
+}
+
+function captureRokid() {
+    prepareRokidScan('正在通过 CXR-L 请求眼镜拍照');
+    window.RokidGlasses.capture();
+}
+
+function startRokidScan() {
+    prepareRokidScan('每 1.2 秒从眼镜获取一张照片并持续修正结果');
+    window.RokidGlasses.startAutoCapture(1200);
+}
+
+function stopRokidScan() {
+    window.RokidGlasses.stopAutoCapture();
+}
+
+function updateRokidState(rawState) {
+    var state = typeof rawState === 'string' ? JSON.parse(rawState) : rawState;
+    document.getElementById('rokidState').textContent = state.message || '眼镜状态已更新';
+    document.getElementById('rokidCaptureButton').disabled = !state.ready;
+    document.getElementById('rokidStartButton').disabled = !state.ready || state.auto_capture;
+    document.getElementById('rokidStopButton').disabled = !state.auto_capture;
+}
+
+window.RokidGlassesEvents = {
+    onState: function(rawState) {
+        try { updateRokidState(rawState); } catch (error) { showScanError(error.message); }
+    },
+    onFrame: function(dataUrl) {
+        var preview = document.getElementById('scanPreview');
+        preview.src = dataUrl;
+        preview.style.display = 'block';
+        document.getElementById('viewfinderText').style.display = 'none';
+    },
+    onAnalysis: function(rawPayload) {
+        try { handleRecognitionPayload(JSON.parse(rawPayload)); }
+        catch (error) { showScanError(error.message); }
+    },
+    onError: function(message) {
+        document.getElementById('rokidState').textContent = message;
+        showScanError(message);
+    }
+};
+
+if (window.RokidGlasses) {
+    document.getElementById('rokidControls').style.display = 'block';
+    document.getElementById('cameraArea').querySelector('#scanButton').style.display = 'none';
+    document.getElementById('rokidServerUrl').value = window.RokidGlasses.getServerUrl();
+    try { updateRokidState(window.RokidGlasses.getState()); } catch (error) {}
+}
+
+document.getElementById('scanFile').addEventListener('change', function(event) {
+    var file = event.target.files && event.target.files[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
+        alert('请选择 JPG、PNG 或 WebP 图片。');
+        return;
+    }
+    if (file.size > 3.5 * 1024 * 1024) {
+        alert('图片不能超过 3.5 MB，请降低拍摄分辨率后重试。');
+        return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = async function() {
+        var image = String(reader.result || '');
+        var preview = document.getElementById('scanPreview');
+        preview.src = image;
+        preview.style.display = 'block';
+        document.getElementById('viewfinderText').style.display = 'none';
+        document.getElementById('scanResult').style.display = 'block';
+        document.getElementById('scanSpinner').style.display = 'block';
+        document.getElementById('scanStatus').textContent = 'AI 视觉分析中...';
+        document.getElementById('scanStatus').style.color = 'var(--text2)';
+        document.getElementById('scanText').textContent = '正在分割食物主体并估算克重';
+        document.getElementById('scanProgress').style.width = '55%';
+        document.getElementById('recognizedFoods').innerHTML = '';
+        document.getElementById('scanButton').disabled = true;
+        lucide.createIcons();
+        try {
+            var response = await fetch('/api/recognition/analyze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content
+                },
+                body: JSON.stringify({image: image})
+            });
+            var payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || '识别服务返回异常');
+            handleRecognitionPayload(payload);
+        } catch (error) {
+            showScanError(error.message || '识别失败，请稍后重试。');
+        } finally {
+            document.getElementById('scanButton').disabled = false;
+            event.target.value = '';
+        }
+    };
+    reader.onerror = function() { showScanError('无法读取所选图片。'); };
+    reader.readAsDataURL(file);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,95 @@
+plugins {
+    id "com.android.application"
+    id "com.chaquo.python"
+}
+
+def healthAppRoot = rootProject.projectDir.parentFile
+def generatedPython = layout.buildDirectory.dir("generated/healthPython")
+def generatedAssets = layout.buildDirectory.dir("generated/healthAssets")
+
+android {
+    namespace "com.healthydiet.app"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.healthydiet.app.rokid"
+        minSdk 31
+        targetSdk 35
+        versionCode 5
+        versionName "1.1.2-rokid"
+
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+        }
+    }
+
+    sourceSets {
+        main {
+            python.srcDir(generatedPython)
+            assets.srcDir(generatedAssets)
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        buildPython new File(healthAppRoot, ".venv/Scripts/python.exe").absolutePath
+        pip {
+            install "flask>=3.0,<4"
+            install "werkzeug>=3.0,<4"
+            install "qrcode>=7.4,<9"
+            install "pypng>=0.20220715.0"
+        }
+    }
+}
+
+tasks.register("syncHealthPython", Copy) {
+    from(healthAppRoot) {
+        include "app.py"
+        include "database.py"
+        include "food_db.py"
+        include "recognition_adapter.py"
+    }
+    into(generatedPython)
+}
+
+tasks.register("syncHealthAssets", Copy) {
+    from(new File(healthAppRoot, "templates")) {
+        into "web/templates"
+    }
+    from(new File(healthAppRoot, "static")) {
+        into "web/static"
+    }
+    from(new File(healthAppRoot, "health.db"))
+    into(generatedAssets)
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("syncHealthPython", "syncHealthAssets")
+}
+
+tasks.configureEach { task ->
+    if (task.name.startsWith("merge") && task.name.endsWith("PythonSources")) {
+        task.dependsOn("syncHealthPython")
+    }
+    if (task.name.startsWith("merge") && task.name.endsWith("Assets")) {
+        task.dependsOn("syncHealthAssets")
+    }
+}
+
+dependencies {
+    implementation files("libs/client-l-1.0.4.aar")
+    implementation files("libs/cxr-service-bridge-1.0.aar")
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.24"
+    implementation "com.google.code.gson:gson:2.11.0"
+}

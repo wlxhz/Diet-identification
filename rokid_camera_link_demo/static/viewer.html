@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rokid Camera Link · Monitor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="viewer-page">
+    <div class="grain" aria-hidden="true"></div>
+    <main class="monitor-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="kicker">OPTICAL RELAY / 01</p>
+            <h1>Rokid Camera Link</h1>
+          </div>
+        </div>
+        <div id="connectionBadge" class="connection-badge waiting">
+          <span class="signal-dot"></span>
+          <span id="connectionText">等待眼镜画面</span>
+        </div>
+      </header>
+
+      <section class="monitor-grid">
+        <article class="stage-card">
+          <div class="stage-header">
+            <span>LIVE VIEW</span>
+            <span id="frameCounter">FRAME —</span>
+          </div>
+          <div class="video-stage">
+            <img id="liveFrame" alt="Rokid 摄像头实时画面" hidden />
+            <div id="emptyState" class="empty-state">
+              <div class="reticle" aria-hidden="true">
+                <i></i><i></i><i></i><i></i>
+              </div>
+              <p class="empty-title">NO OPTICAL SIGNAL</p>
+              <p>打开采集端并允许摄像头后，画面将显示在这里。</p>
+            </div>
+            <div class="scanline" aria-hidden="true"></div>
+            <span class="corner top-left"></span>
+            <span class="corner top-right"></span>
+            <span class="corner bottom-left"></span>
+            <span class="corner bottom-right"></span>
+          </div>
+          <footer class="stage-footer">
+            <span id="resolutionValue">0 × 0</span>
+            <span>JPEG RELAY</span>
+            <span id="clockValue">--:--:--</span>
+          </footer>
+        </article>
+
+        <aside class="telemetry">
+          <section class="panel link-panel">
+            <p class="panel-label">CAPTURE ENDPOINT</p>
+            <h2>连接采集端</h2>
+            <p class="panel-copy">
+              让眼镜或中转设备与电脑处于同一局域网，然后打开下面的地址。
+            </p>
+            <label class="endpoint-field">
+              <span>地址</span>
+              <input id="captureUrl" readonly />
+            </label>
+            <button id="copyButton" type="button">复制采集地址</button>
+            <p id="copyFeedback" class="microcopy">手机可先用于验证电脑接收端。</p>
+          </section>
+
+          <section class="panel metrics-panel">
+            <p class="panel-label">LINK TELEMETRY</p>
+            <div class="metric-list">
+              <div class="metric">
+                <span>链路延迟</span>
+                <strong id="latencyValue">—</strong>
+                <small>ms</small>
+              </div>
+              <div class="metric">
+                <span>接收速率</span>
+                <strong id="fpsValue">0.0</strong>
+                <small>fps</small>
+              </div>
+              <div class="metric">
+                <span>图片大小</span>
+                <strong id="sizeValue">—</strong>
+                <small>KB</small>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel device-panel">
+            <p class="panel-label">SOURCE</p>
+            <dl>
+              <div><dt>设备</dt><dd id="deviceValue">尚未连接</dd></div>
+              <div><dt>来源 IP</dt><dd id="ipValue">—</dd></div>
+              <div><dt>最后接收</dt><dd id="receivedValue">—</dd></div>
+            </dl>
+          </section>
+
+          <section class="panel diagnostic-panel">
+            <p class="panel-label">DIAGNOSTIC</p>
+            <p id="diagnosticText">服务器已就绪，正在等待第一张 JPEG 图片。</p>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script src="/viewer.js"></script>
+  </body>
+</html>
