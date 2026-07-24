@@ -62,6 +62,7 @@ public final class MainActivity extends Activity
     private boolean cxrConnected;
     private boolean glassBtConnected;
     private boolean sessionReady;
+    private boolean screenOffCaptureAllowed;
     private boolean capturePending;
     private boolean autoCapture;
     private long captureIntervalMs = DEFAULT_CAPTURE_INTERVAL_MS;
@@ -299,8 +300,12 @@ public final class MainActivity extends Activity
             glassBtConnected = cxrLink.isGlassBtConnected();
             sessionReady = currentState == CxrDefs.CXRSessionState.SessionAvailable
                     || currentState == CxrDefs.CXRSessionState.SessionStart;
-            if (glassBtConnected && sessionReady) {
-                emitState("Rokid 眼镜已连接，相机会话可用");
+            screenOffCaptureAllowed =
+                    currentState == CxrDefs.CXRSessionState.SessionPause;
+            if (isCameraCaptureAllowed()) {
+                emitState(sessionReady
+                        ? "Rokid 眼镜已连接，相机会话可用"
+                        : "Rokid 眼镜已连接，熄屏摄像模式可用");
                 return;
             }
         }
@@ -309,8 +314,8 @@ public final class MainActivity extends Activity
     }
 
     private void captureFromGlasses() {
-        if (!cxrConnected || !glassBtConnected || !sessionReady) {
-            emitError("眼镜链路尚未就绪，请先完成 Rokid AI App 蓝牙配对与授权");
+        if (!isCameraCaptureAllowed()) {
+            emitError("眼镜摄像链路尚未就绪，请先完成 Rokid AI App 蓝牙配对与授权");
             return;
         }
         capturePending = cxrLink.takePhoto(1280, 720, 82);
@@ -319,6 +324,12 @@ public final class MainActivity extends Activity
         } else {
             emitState("正在从 RV101 获取照片");
         }
+    }
+
+    private boolean isCameraCaptureAllowed() {
+        return cxrConnected
+                && glassBtConnected
+                && (sessionReady || screenOffCaptureAllowed);
     }
 
     private void uploadForAnalysis(byte[] jpeg) {
@@ -380,7 +391,7 @@ public final class MainActivity extends Activity
             state.put("cxr_connected", cxrConnected);
             state.put("glass_bt_connected", glassBtConnected);
             state.put("session_ready", sessionReady);
-            state.put("ready", cxrConnected && glassBtConnected && sessionReady);
+            state.put("ready", isCameraCaptureAllowed());
             state.put("auto_capture", autoCapture);
             state.put("capture_pending", capturePending);
             state.put("server_url", preferences.getString(
@@ -437,6 +448,7 @@ public final class MainActivity extends Activity
         cxrConnected = connected;
         if (!connected) {
             sessionReady = false;
+            screenOffCaptureAllowed = false;
         }
         emitState(connected ? "CXR-L 服务已连接" : "CXR-L 服务已断开");
     }
@@ -446,6 +458,7 @@ public final class MainActivity extends Activity
         glassBtConnected = connected;
         if (!connected) {
             sessionReady = false;
+            screenOffCaptureAllowed = false;
         }
         emitState(connected ? "RV101 蓝牙已连接" : "RV101 蓝牙未连接");
     }
@@ -478,24 +491,31 @@ public final class MainActivity extends Activity
     @Override
     public void onSessionAvailable(CxrDefs.CXRSessionReason reason) {
         sessionReady = true;
+        screenOffCaptureAllowed = false;
         emitState("眼镜相机会话可用");
     }
 
     @Override
     public void onSessionStart(CxrDefs.CXRSessionReason reason) {
         sessionReady = true;
+        screenOffCaptureAllowed = false;
         emitState("眼镜相机会话已就绪");
     }
 
     @Override
     public void onSessionPause(CxrDefs.CXRSessionReason reason) {
         sessionReady = false;
-        emitState("眼镜相机会话暂停：" + reason);
+        screenOffCaptureAllowed =
+                reason == CxrDefs.CXRSessionReason.SESSION_SCREEN_OFF;
+        emitState(screenOffCaptureAllowed
+                ? "眼镜已熄屏，摄像头后台采集保持可用"
+                : "眼镜相机会话暂停：" + reason);
     }
 
     @Override
     public void onSessionUnavailable(CxrDefs.CXRSessionReason reason) {
         sessionReady = false;
+        screenOffCaptureAllowed = false;
         emitState("眼镜相机会话不可用：" + reason);
     }
 
