@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}扫一扫 - 健康饮食{% endblock %}
+
+{% block hero %}
+<div class="hero-banner">
+    <span class="hero-icon"><i data-lucide="scan-line" style="width:40px;height:40px;"></i></span>
+    <div class="greeting">绑定管理</div>
+    <h1>扫一扫绑定</h1>
+    <p class="subtitle">扫描二维码或手动输入绑定码完成关联</p>
+</div>
+{% endblock %}
+
+{% block content %}
+
+<div class="card card-accent-top">
+    <h2><i data-lucide="camera" class="icon-md"></i>二维码扫描</h2>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:16px;">
+        摄像头识别功能正在开发中，目前请使用下方 8 位绑定码完成关联。
+    </p>
+    <div class="scanner-box" id="scannerBox">
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">
+            <div class="viewfinder" style="margin:0;background:transparent;">
+                <div class="corner tl"></div><div class="corner tr"></div>
+                <div class="corner bl"></div><div class="corner br"></div>
+                <div class="scan-line"></div>
+            </div>
+        </div>
+        <video id="video" style="display:none;width:100%;height:100%;object-fit:cover;"></video>
+    </div>
+    <div style="text-align:center;margin-top:14px;">
+        <button class="btn btn-secondary" type="button" disabled><i data-lucide="construction" class="icon-sm"></i> 扫码功能开发中</button>
+    </div>
+    <p id="scanStatus" style="text-align:center;font-size:12px;color:var(--text3);margin-top:12px;"></p>
+</div>
+
+<div class="card card-accent-blue">
+    <h2><i data-lucide="keyboard" class="icon-md"></i>手动输入绑定码</h2>
+    <form method="POST" action="/bind"><input type="hidden" name="mode" value="code">
+        <div class="form-group"><label>绑定码</label><input type="text" name="bind_code" placeholder="输入 8 位绑定码" required maxlength="8" style="letter-spacing:6px;font-size:22px;text-align:center;"></div>
+        <button type="submit" class="btn btn-primary btn-lg btn-block"><i data-lucide="link" class="icon-sm"></i> 确认绑定</button>
+    </form>
+</div>
+
+<div style="text-align:center;margin-top:10px;">
+    <a href="/profile" class="btn btn-secondary btn-sm">&larr; 返回个人主页</a>
+</div>
+
+<script>
+var stream=null;
+async function startCamera(){var b=document.getElementById('camBtn'),s=document.getElementById('stopBtn'),v=document.getElementById('video'),t=document.getElementById('scanStatus');
+try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});v.srcObject=stream;v.style.display='block';v.play();b.style.display='none';s.style.display='inline-block';t.textContent='摄像头已开启 · 对准二维码';}catch(e){t.textContent='无法访问摄像头：'+e.message;alert('无法访问摄像头，请使用手动或模拟扫码');}}
+function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}document.getElementById('video').style.display='none';document.getElementById('camBtn').style.display='inline-block';document.getElementById('stopBtn').style.display='none';document.getElementById('scanStatus').textContent='';}
+function simulateScan(){document.getElementById('scanStatus').textContent='模拟扫描中...';
+setTimeout(function(){var f=document.createElement('form');f.method='POST';f.action='/bind';
+var m=document.createElement('input');m.type='hidden';m.name='mode';m.value='scan';
+var c=document.createElement('input');c.type='hidden';c.name='scan_data';c.value='{{ 'SIM' if user.role=='supervisor' else 'SUP' }}';
+f.appendChild(m);f.appendChild(c);document.body.appendChild(f);f.submit();},1500);}
+</script>
+{% endblock %}

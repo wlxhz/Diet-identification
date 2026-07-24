@@ -1,7 +1,29 @@
+_# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
+# Environment
+.env
+venv/
+.venv/
+
+# Database
 *.db
+*.sqlite
+*.sqlite3
+
+# Health app runtime
+.health-*
+*.pid
+
+# APK
 *.apk
 
-.health-*
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
