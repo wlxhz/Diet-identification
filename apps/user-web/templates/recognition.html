@@ -180,22 +180,71 @@ function prepareRokidScan(message) {
 
 function saveRokidServer() {
     var value = document.getElementById('rokidServerUrl').value.trim();
+    var current = '';
+    try { current = window.RokidGlasses.getServerUrl(); } catch (error) {}
+    if (value === current) return value;
     if (!window.RokidGlasses.setServerUrl(value)) {
         throw new Error('请输入完整地址，例如 http://192.168.1.100:9088');
     }
+    return value;
 }
+
+function setRokidState(text) {
+    document.getElementById('rokidState').textContent = text;
+}
+
+function rokidFriendlyError(error) {
+    var message = (error && error.message) || '';
+    if (!message || /failed to fetch|networkerror|load failed|json/i.test(message)) {
+        return '无法连接电脑识别服务：请确认地址正确、手机和电脑在同一 WiFi，且电脑端服务已启动';
+    }
+    return message;
+}
+
+var rokidConnectCheckTimer = null;
 
 function connectRokid() {
     try {
-        saveRokidServer();
-        window.RokidGlasses.requestAuthorizationAndConnect();
+        var serverUrl = saveRokidServer();
+        window.RokidGlasses.start(serverUrl);
     } catch (error) {
         showScanError(error.message);
+        return;
     }
+    setRokidState('正在连接眼镜并请求推流，请留意手机上的授权弹窗...');
+    watchRokidConnection();
+}
+
+function watchRokidConnection() {
+    if (rokidConnectCheckTimer) clearInterval(rokidConnectCheckTimer);
+    var attempts = 0;
+    rokidConnectCheckTimer = setInterval(async function() {
+        attempts += 1;
+        var seconds = attempts * 2;
+        try {
+            var response = await fetch(rokidServerBase() + '/api/health?ts=' + Date.now(), {cache: 'no-store'});
+            var health = await response.json();
+            if (health && health.streamConnected) {
+                clearInterval(rokidConnectCheckTimer);
+                rokidConnectCheckTimer = null;
+                setRokidState('眼镜视频流已连通，可点击「眼镜拍照」或「开始低频采集」');
+                return;
+            }
+            setRokidState('已连上电脑识别服务，等待眼镜视频流到达（' + seconds + ' 秒）...');
+        } catch (error) {
+            setRokidState('正在等待连接（' + seconds + ' 秒）：暂未连上电脑识别服务');
+        }
+        if (attempts >= 15) {
+            clearInterval(rokidConnectCheckTimer);
+            rokidConnectCheckTimer = null;
+            setRokidState('30 秒内未收到眼镜视频流：请确认眼镜已开机配对、地址正确、手机和电脑在同一 WiFi，然后重试');
+        }
+    }, 2000);
 }
 
 var rokidPullTimer = null;
 var rokidPullBusy = false;
+var rokidLastAutoStartMs = 0;
 
 function rokidServerBase() {
     var value = document.getElementById('rokidServerUrl').value.trim();
@@ -203,13 +252,30 @@ function rokidServerBase() {
     return value.replace(/\/+$/, '');
 }
 
+async function fetchRokidHealth(base) {
+    var response = await fetch(base + '/api/health?ts=' + Date.now(), {cache: 'no-store'});
+    return response.json();
+}
+
+function autoRestartRokidStream() {
+    var now = Date.now();
+    if (now - rokidLastAutoStartMs < 10000) return;
+    rokidLastAutoStartMs = now;
+    try { window.RokidGlasses.start(window.RokidGlasses.getServerUrl()); } catch (error) {}
+}
+
 async function pullRokidFrameAndAnalysis(showErrors) {
     if (rokidPullBusy) return;
     rokidPullBusy = true;
     var base = rokidServerBase();
     try {
+        var health = await fetchRokidHealth(base);
+        if (!health || !health.streamConnected) {
+            autoRestartRokidStream();
+            throw new Error('眼镜视频流已断开（切到后台会中断推流），已自动重新请求推流，请等待几秒后再拍照');
+        }
         var frameResponse = await fetch(base + '/api/frame.jpg?ts=' + Date.now(), {cache: 'no-store'});
-        if (!frameResponse.ok) throw new Error('电脑端尚未收到眼镜视频帧');
+        if (!frameResponse.ok) throw new Error('电脑端尚未收到眼镜视频帧，请先点「授权并连接眼镜」并等待推流开始');
         var blob = await frameResponse.blob();
         var dataUrl = await new Promise(function(resolve, reject) {
             var reader = new FileReader();
@@ -229,9 +295,50 @@ async function pullRokidFrameAndAnalysis(showErrors) {
         document.getElementById('rokidState').textContent =
             '已从电脑端获取画面与识别结果（' + new Date().toLocaleTimeString() + '）';
     } catch (error) {
-        var message = (error && error.message) || '无法连接电脑识别服务';
+        var message = rokidFriendlyError(error);
         document.getElementById('rokidState').textContent = message;
         if (showErrors) showScanError(message);
+    } finally {
+        rokidPullBusy = false;
+    }
+}
+
+async function pullRokidAnalysis() {
+    if (rokidPullBusy) return;
+    rokidPullBusy = true;
+    var base = rokidServerBase();
+    try {
+        var health = await fetchRokidHealth(base);
+        if (!health || !health.streamConnected) {
+            autoRestartRokidStream();
+            setRokidState('眼镜视频流已断开，正在自动恢复推流，请保持 App 在前台...');
+            return;
+        }
+        var analysisResponse = await fetch(base + '/api/analysis/latest', {cache: 'no-store'});
+        var payload = await analysisResponse.json();
+        var frameResponse = await fetch(base + '/api/frame.jpg?ts=' + Date.now(), {cache: 'no-store'});
+        if (frameResponse.ok) {
+            var blob = await frameResponse.blob();
+            var dataUrl = await new Promise(function(resolve, reject) {
+                var reader = new FileReader();
+                reader.onload = function() { resolve(String(reader.result || '')); };
+                reader.onerror = function() { reject(new Error('读取视频帧失败')); };
+                reader.readAsDataURL(blob);
+            });
+            currentRecognitionImage = dataUrl;
+            currentRecognitionSource = 'glasses';
+            document.getElementById('recordImageData').value = dataUrl;
+            document.getElementById('recordSourceType').value = 'glasses';
+        }
+        if (payload && payload.ok && payload.has_analysis && payload.analysis) {
+            handleRecognitionPayload(Object.assign({ok: true}, payload.analysis));
+        } else {
+            document.getElementById('scanStatus').textContent = '画面已更新，等待识别结果...';
+        }
+        document.getElementById('rokidState').textContent =
+            '实时预览中，识别结果已更新（' + new Date().toLocaleTimeString() + '）';
+    } catch (error) {
+        document.getElementById('rokidState').textContent = rokidFriendlyError(error);
     } finally {
         rokidPullBusy = false;
     }
@@ -246,9 +353,21 @@ function captureRokid() {
 function startRokidScan() {
     try { saveRokidServer(); } catch (error) { showScanError(error.message); return; }
     if (rokidPullTimer) return;
-    prepareRokidScan('每 1.2 秒从电脑端获取眼镜画面并持续修正结果');
-    pullRokidFrameAndAnalysis(true);
-    rokidPullTimer = setInterval(function() { pullRokidFrameAndAnalysis(false); }, 1200);
+    prepareRokidScan('实时预览眼镜画面，识别结果每 1.2 秒刷新');
+    var preview = document.getElementById('scanPreview');
+    preview.onerror = function() {
+        if (!rokidPullTimer) return;
+        setRokidState('实时画面中断，2 秒后自动重连...');
+        setTimeout(function() {
+            if (!rokidPullTimer) return;
+            preview.src = rokidServerBase() + '/api/stream.mjpg?ts=' + Date.now();
+        }, 2000);
+    };
+    preview.src = rokidServerBase() + '/api/stream.mjpg?ts=' + Date.now();
+    preview.style.display = 'block';
+    document.getElementById('viewfinderText').style.display = 'none';
+    pullRokidAnalysis();
+    rokidPullTimer = setInterval(pullRokidAnalysis, 1200);
     refreshRokidButtons();
 }
 
@@ -256,6 +375,15 @@ function stopRokidScan() {
     if (rokidPullTimer) {
         clearInterval(rokidPullTimer);
         rokidPullTimer = null;
+    }
+    var preview = document.getElementById('scanPreview');
+    preview.onerror = null;
+    if (currentRecognitionImage) {
+        preview.src = currentRecognitionImage;
+    } else {
+        preview.removeAttribute('src');
+        preview.style.display = 'none';
+        document.getElementById('viewfinderText').style.display = '';
     }
     document.getElementById('rokidState').textContent = '低频采集已停止';
     refreshRokidButtons();
@@ -291,6 +419,15 @@ window.RokidGlassesEvents = {
         try { handleRecognitionPayload(JSON.parse(rawPayload)); }
         catch (error) { showScanError(error.message); }
     },
+    onStreamerStatus: function(rawStatus) {
+        try {
+            var status = typeof rawStatus === 'string' ? JSON.parse(rawStatus) : rawStatus;
+            if (status && status.state) {
+                document.getElementById('rokidState').textContent =
+                    (status.state === 'streaming' ? '眼镜视频流正在传输' : '眼镜端状态：' + status.state);
+            }
+        } catch (error) {}
+    },
     onError: function(message) {
         document.getElementById('rokidState').textContent = message;
         showScanError(message);
@@ -302,6 +439,14 @@ if (window.RokidGlasses) {
     document.getElementById('cameraArea').querySelector('#scanButton').style.display = 'none';
     document.getElementById('rokidServerUrl').value = window.RokidGlasses.getServerUrl();
     try { updateRokidState(window.RokidGlasses.getState()); } catch (error) {}
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden || !rokidPullTimer) return;
+        rokidLastAutoStartMs = 0;
+        setRokidState('回到前台，正在恢复眼镜画面...');
+        var preview = document.getElementById('scanPreview');
+        preview.src = rokidServerBase() + '/api/stream.mjpg?ts=' + Date.now();
+        pullRokidAnalysis();
+    });
 }
 
 document.getElementById('scanFile').addEventListener('change', function(event) {

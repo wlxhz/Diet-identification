@@ -616,13 +616,17 @@ public final class MainActivity extends Activity
                 emitError("眼镜端尚未安装推流程序，请先亮屏完成一次检查和安装");
                 return;
             }
-            sendPendingStartOrStatus();
             if (!isCommandTransportReady()) {
                 emitState("推流请求已保存，正在恢复 Rokid 连接");
                 requestBluetoothThenAuthorize();
-            } else if (!streamerRuntimeReady && sessionReady) {
-                ensureStreamerRuntime();
+                return;
             }
+            // 实测眼镜端后台服务经常不回自定义指令，重新拉起眼镜端推流 App 才能可靠恢复推流
+            streamerRuntimeReady = false;
+            streamerAppOpen = false;
+            streamerLaunchInFlight = false;
+            sendPendingStartOrStatus();
+            ensureStreamerRuntime();
         } catch (Exception error) {
             pendingStartCommand = null;
             emitError("无法启动视频流：" + error.getMessage());

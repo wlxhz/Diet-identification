@@ -687,6 +687,11 @@ class VideoStreamReceiver:
             self.metrics.set_running(False)
 
 
+ROTATE_DEGREES = 0
+
+_PIL_ROTATE_BY_DEGREES = {90: 2, 180: 3, 270: 4}  # PIL Image.Transpose 枚举值
+
+
 def encode_video_frame_to_jpeg(video_frame: object, *, quality: int = 82) -> bytes:
     try:
         import PIL  # noqa: F401 - PyAV VideoFrame.to_image() needs Pillow.
@@ -699,7 +704,10 @@ def encode_video_frame_to_jpeg(video_frame: object, *, quality: int = 82) -> byt
     to_image = getattr(video_frame, "to_image", None)
     if not callable(to_image):
         raise TypeError("解码帧不支持 to_image()")
-    to_image().save(
+    image = to_image()
+    if ROTATE_DEGREES in _PIL_ROTATE_BY_DEGREES:
+        image = image.transpose(_PIL_ROTATE_BY_DEGREES[ROTATE_DEGREES])
+    image.save(
         output,
         format="JPEG",
         quality=min(95, max(35, quality)),
@@ -1438,7 +1446,17 @@ def main() -> None:
         default=82,
         help="浏览器预览 JPEG 质量",
     )
+    parser.add_argument(
+        "--rotate",
+        type=int,
+        default=0,
+        choices=(0, 90, 180, 270),
+        help="逆时针旋转画面角度（眼镜传感器方向校正）",
+    )
     args = parser.parse_args()
+
+    global ROTATE_DEGREES
+    ROTATE_DEGREES = args.rotate
 
     global CONFIGURED_UDP_HOST, CONFIGURED_UDP_PORT
     global VIDEO_RECEIVER, PREVIEW_WORKER, RECOGNITION_WORKER
