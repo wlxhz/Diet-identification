@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}饮食记录 - 健康饮食{% endblock %}
+
+{% block hero %}
+<div class="hero-banner">
+    <span class="hero-icon"><i data-lucide="utensils-crossed" style="width:40px;height:40px;"></i></span>
+    <div class="greeting">{{ '我的饮食' if viewed_user.id == user.id else ((viewed_user.nickname or '好友') + '的饮食') }}</div>
+    <h1>{{ '记录每一餐' if viewed_user.id == user.id else '共享饮食记录' }}</h1>
+    <p class="subtitle">{{ '手动记录 · 准确计算 · 清晰回顾' if viewed_user.id == user.id else '仅查看对方已授权分享的内容' }}</p>
+</div>
+{% endblock %}
+
+{% block content %}
+{% set today_cal = namespace(v=0) %}
+{% set today_count = namespace(v=0) %}
+{% for record in records %}
+    {% if record.intake_time and record.intake_time[:10] == now.strftime('%Y-%m-%d') %}
+        {% set today_cal.v = today_cal.v + record.calories %}
+        {% set today_count.v = today_count.v + 1 %}
+    {% endif %}
+{% endfor %}
+
+<div class="viewer-switch" aria-label="饮食记录用户切换">
+    <a href="/diet" class="viewer-chip {{ 'active' if viewed_user.id == user.id }}">
+        <i data-lucide="user-round" class="icon-sm"></i> 我的饮食
+    </a>
+    {% for connection in connections %}
+        {% if connection.other_share_diet %}
+        <a href="/diet?user_id={{ connection.other_id }}" class="viewer-chip {{ 'active' if viewed_user.id == connection.other_id }}">
+            <i data-lucide="users-round" class="icon-sm"></i> {{ connection.my_remark or connection.other_nickname }}
+        </a>
+        {% endif %}
+    {% endfor %}
+</div>
+
+<div class="card card-accent-top">
+    <h2><i data-lucide="bar-chart-3" class="icon-md"></i>今日饮食概览</h2>
+    <div class="stats" style="margin-bottom:0;">
+        <div class="stat-card green">
+            <div class="stat-icon"><i data-lucide="utensils"></i></div>
+            <div class="stat-value">{{ today_count.v }}</div>
+            <div class="stat-label">已记录餐次</div>
+        </div>
+        <div class="stat-card orange">
+            <div class="stat-icon"><i data-lucide="flame"></i></div>
+            <div class="stat-value">{{ "%.0f"|format(today_cal.v) }}</div>
+            <div class="stat-label">今日摄入 kcal</div>
+        </div>
+    </div>
+</div>
+
+{% if viewed_user.id == user.id %}
+<div class="tabs">
+    <button class="tab active" type="button" onclick="switchTab('record',this)"><i data-lucide="notebook-pen" class="icon-sm"></i>记录饮食</button>
+    <button class="tab" type="button" onclick="switchTab('history',this)"><i data-lucide="list" class="icon-sm"></i>历史记录</button>
+</div>
+
+<div id="tab-record" class="tab-content active">
+    <div class="card card-accent-top" id="recordCard">
+        <h2><i data-lucide="notebook-pen" class="icon-md"></i>记录饮食</h2>
+        <form method="POST" action="/diet/record">
+            <div class="form-group">
+                <label>食物 <span class="required-mark">*</span></label>
+                <select name="food_name" id="foodSelect" required>
+                    <option value="">选择食物</option>
+                    {% for food in foods %}
+                    <option value="{{ food.name }}">{{ food.name }}（{{ food.calories_per_100g }} kcal/100g）</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>克重（g） <span class="required-mark">*</span></label>
+                <input type="number" name="weight_grams" id="weightInput" placeholder="例如：200" step="0.5" min="0.5" max="5000" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-lg btn-block"><i data-lucide="check" class="icon-sm"></i>确认记录</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2><i data-lucide="zap" class="icon-md"></i>快捷添加</h2>
+        <div class="action-grid">
+            <button type="button" class="action-item" onclick="quickFood('白米饭',200)"><span class="action-icon"><i data-lucide="rice"></i></span><span class="action-label">白米饭 200g</span></button>
+            <button type="button" class="action-item" onclick="quickFood('鸡胸肉',150)"><span class="action-icon"><i data-lucide="drumstick"></i></span><span class="action-label">鸡胸肉 150g</span></button>
+            <button type="button" class="action-item" onclick="quickFood('鸡蛋',100)"><span class="action-icon"><i data-lucide="egg"></i></span><span class="action-label">鸡蛋 100g</span></button>
+            <button type="button" class="action-item" onclick="quickFood('牛奶',250)"><span class="action-icon"><i data-lucide="milk"></i></span><span class="action-label">牛奶 250g</span></button>
+            <button type="button" class="action-item" onclick="quickFood('苹果',200)"><span class="action-icon"><i data-lucide="apple"></i></span><span class="action-label">苹果 200g</span></button>
+            <button type="button" class="action-item" onclick="quickFood('西兰花',150)"><span class="action-icon"><i data-lucide="leafy-green"></i></span><span class="action-label">西兰花 150g</span></button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div id="tab-history" class="tab-content {{ 'active' if viewed_user.id != user.id }}">
+    {% if records %}
+    <div class="card">
+        <h2><i data-lucide="list" class="icon-md"></i>{{ viewed_user.nickname }}的饮食时间线</h2>
+        <div class="timeline">
+        {% set last_date = namespace(v='') %}
+        {% for record in records %}
+            {% set record_date = record.intake_time[:10] if record.intake_time else '' %}
+            {% if record_date != last_date.v %}
+                {% set last_date.v = record_date %}
+                <div class="timeline-date">{{ record_date }}</div>
+            {% endif %}
+            <div class="timeline-item">
+                <div class="time-label">{{ record.intake_time[11:16] if record.intake_time and record.intake_time|length >= 16 else '' }}</div>
+                <div class="time-card record-row">
+                    <span class="set-icon"><i data-lucide="utensils" style="color:var(--green);"></i></span>
+                    <div class="record-main">
+                        <strong>{{ record.food_name }}</strong>
+                        <div class="record-meta">{{ "%.0f"|format(record.weight_grams) }}g · <strong>{{ "%.1f"|format(record.calories) }} kcal</strong></div>
+                    </div>
+                    {% if record.user_id == user.id %}
+                    <form method="POST" action="/diet/delete/{{ record.id }}" onsubmit="return confirm('确定删除这条记录吗？')">
+                        <button class="btn btn-danger btn-sm" title="删除记录"><i data-lucide="trash-2" class="icon-sm"></i></button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+        {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <div class="empty">
+        <div class="empty-icon"><i data-lucide="utensils-crossed"></i></div>
+        <p style="font-size:16px;font-weight:600;">暂无饮食记录</p>
+        <p style="font-size:13px;color:var(--text3);">{{ '从记录第一餐开始' if viewed_user.id == user.id else '对方还没有饮食记录' }}</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function switchTab(name,button){
+    document.querySelectorAll('.tab').forEach(function(tab){tab.classList.remove('active');});
+    document.querySelectorAll('.tab-content').forEach(function(content){content.classList.remove('active');});
+    button.classList.add('active');document.getElementById('tab-'+name).classList.add('active');lucide.createIcons();
+}
+function quickFood(name,weight){
+    var select=document.getElementById('foodSelect');
+    for(var i=0;i<select.options.length;i++){if(select.options[i].value===name){select.selectedIndex=i;break;}}
+    document.getElementById('weightInput').value=weight;
+    document.getElementById('recordCard').scrollIntoView({behavior:'smooth',block:'start'});
+}
+</script>
+{% endblock %}

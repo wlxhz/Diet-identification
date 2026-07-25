@@ -1,0 +1,78 @@
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/htmlcov/
+**/.venv/
+**/venv/
+
+# Runtime data and secrets
+.env
+.env.*
+!.env.example
+**/.health-session-secret
+**/.admin-session-secret
+**/.health-server.pid
+**/.health-server-source-stamp
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+
+# User-generated files
+apps/user-web/static/uploads/avatars/*
+!apps/user-web/static/uploads/avatars/.gitkeep
+
+# Android / Gradle
+.android-sdk/
+.gradle-home/
+**/.gradle/
+**/build/
+**/local.properties
+**/*.jks
+**/*.keystore
+
+# Node and package caches
+**/node_modules/
+.npm-cache*/
+
+# Local workspace and analysis
+.workspace/
+.codex-analysis/
+.pydeps/
+
+# Archived nested repository (kept locally for traceability)
+legacy/*
+!legacy/README.md
+
+# Delivery and debug artifacts
+artifacts/debug/
+artifacts/releases/**/*.apk
+artifacts/releases/**/*.aab
+artifacts/releases/**/*.zip
+
+# Logs and temporary output
+**/*.log
+**/*.out
+**/*.pid
+**/.tmp-*
+**/tmp/
+**/temp/
+
+# OS and IDE
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.suo
+*.user
+*.lnk
+
+# Browser test output
+**/.browser-*
+**/browser-smoke.png

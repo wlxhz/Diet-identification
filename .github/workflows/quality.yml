@@ -1,0 +1,27 @@
+name: quality
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  structure-and-syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate repository structure
+        shell: pwsh
+        run: ./scripts/quality/check-structure.ps1
+      - name: Compile core Python modules
+        shell: pwsh
+        run: >-
+          python -m py_compile
+          apps/user-web/app.py
+          apps/user-web/database.py
+          apps/user-web/recognition_adapter.py
+          apps/supervisor-web/app.py
+          apps/supervisor-web/admin_database.py
+          tools/camera-link/server.py
