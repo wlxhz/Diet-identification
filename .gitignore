@@ -27,3 +27,17 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Raw annotation data from AnyLabeling
+Camera_*/
+
+# Training packs and datasets
+*.zip
+datasets/
+training/utensil/datasets/
+training/food/datasets/
+training/runs/
+
+# Test outputs
+demo/scripts/assets/
+*_result.jpg
