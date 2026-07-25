@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+admin.db
+.admin-session-secret
+.venv/
