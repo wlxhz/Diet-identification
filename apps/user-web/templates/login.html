@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block body_class %}auth-page{% endblock %}
 {% block background %}{% endblock %}
-{% block title %}登录 - 健康饮食{% endblock %}
+{% block title %}登录 - V&amp;B{% endblock %}
 {% block content %}
 
 <div class="card login-card">
     <div class="brand-header">
-        <span class="brand-icon"><i data-lucide="apple"></i></span>
-        <h1>健康饮食</h1>
-        <p>智能管理你的每一餐</p>
+        <span class="brand-icon"><img src="{{ url_for('static', filename='brand/vb-icon-192.png', v='20260725-monogram-glow-v5') }}" alt="V&amp;B"></span>
+        <h1>V&amp;B</h1>
+        <p>看见每一餐，平衡每一天</p>
     </div>
 
     <div class="tabs">

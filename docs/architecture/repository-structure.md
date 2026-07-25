@@ -15,6 +15,7 @@
 | `services/` | 后端和算法服务 | UI 发布物、APK 历史版本 |
 | `ml/` | 训练、数据转换、模型评估 | 生产用户数据 |
 | `tools/` | 联调、诊断和开发工具 | 正式业务持久化 |
+| `assets/` | 跨应用品牌源文件和设计母版 | 运行时上传、页面业务逻辑 |
 | `docs/` | 当前有效文档 | 运行缓存 |
 | `scripts/` | 仓库级自动化脚本 | 模块业务逻辑 |
 | `artifacts/` | APK、截图、日志、发布包 | 唯一源码 |
@@ -30,6 +31,7 @@ apps/rokid-streamer
 services/recognition
 ml/training
 tools/camera-link
+assets
 ```
 
 禁止重新创建以下旧顶层目录：

@@ -67,6 +67,16 @@ def _migrate_legacy_schema(conn):
         ("bound_to", "INTEGER REFERENCES users(id)"),
         # SQLite cannot add CURRENT_TIMESTAMP as a default to a populated table.
         ("created_at", "TIMESTAMP"),
+        ("active", "INTEGER NOT NULL DEFAULT 1"),
+        ("last_active_at", "TIMESTAMP"),
+        ("medical_history", "TEXT NOT NULL DEFAULT ''"),
+        ("allergies", "TEXT NOT NULL DEFAULT ''"),
+        ("diet_preferences", "TEXT NOT NULL DEFAULT ''"),
+        ("dietary_restrictions", "TEXT NOT NULL DEFAULT ''"),
+        ("chronic_conditions", "TEXT NOT NULL DEFAULT ''"),
+        ("risk_level", "TEXT NOT NULL DEFAULT 'low'"),
+        ("health_notes", "TEXT NOT NULL DEFAULT ''"),
+        ("daily_calorie_target", "REAL"),
     ])
     _add_missing_columns(conn, "verify_codes", [("email", "TEXT")])
     _add_missing_columns(conn, "food_library", [
@@ -75,6 +85,27 @@ def _migrate_legacy_schema(conn):
         ("calcium_mg", "REAL DEFAULT 0"),
         ("magnesium_mg", "REAL DEFAULT 0"),
         ("iron_mg", "REAL DEFAULT 0"),
+        ("unit", "TEXT NOT NULL DEFAULT 'g'"),
+        ("protein_g", "REAL NOT NULL DEFAULT 0"),
+        ("fat_g", "REAL NOT NULL DEFAULT 0"),
+        ("carbs_g", "REAL NOT NULL DEFAULT 0"),
+        ("fiber_g", "REAL NOT NULL DEFAULT 0"),
+        ("substitutes", "TEXT NOT NULL DEFAULT ''"),
+        ("active", "INTEGER NOT NULL DEFAULT 1"),
+    ])
+    _add_missing_columns(conn, "diet_records", [
+        ("image_url", "TEXT DEFAULT ''"),
+        ("source_type", "TEXT DEFAULT 'manual'"),
+        ("recognition_suggestions", "TEXT DEFAULT ''"),
+        ("original_food_name", "TEXT"),
+        ("original_weight_grams", "REAL"),
+        ("corrected_at", "TIMESTAMP"),
+        ("protein_g", "REAL NOT NULL DEFAULT 0"),
+        ("fat_g", "REAL NOT NULL DEFAULT 0"),
+        ("carbs_g", "REAL NOT NULL DEFAULT 0"),
+        ("fiber_g", "REAL NOT NULL DEFAULT 0"),
+        ("meal_type", "TEXT NOT NULL DEFAULT ''"),
+        ("description", "TEXT NOT NULL DEFAULT ''"),
     ])
 
     user_columns = _columns(conn, "users")
@@ -163,6 +194,12 @@ def init_db():
                 weight_grams REAL NOT NULL CHECK(weight_grams > 0 AND weight_grams <= 5000),
                 calories REAL NOT NULL CHECK(calories >= 0),
                 intake_time TIMESTAMP NOT NULL,
+                image_url TEXT DEFAULT '',
+                source_type TEXT DEFAULT 'manual',
+                recognition_suggestions TEXT DEFAULT '',
+                original_food_name TEXT,
+                original_weight_grams REAL,
+                corrected_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 

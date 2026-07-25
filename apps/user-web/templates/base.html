@@ -5,7 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <script>if (window.RokidGlasses || /; wv\)/.test(navigator.userAgent)) document.documentElement.classList.add('android-webview');</script>
-    <title>{% block title %}健康饮食{% endblock %}</title>
+    <title>{% block title %}V&amp;B{% endblock %}</title>
+    <meta name="application-name" content="V&amp;B">
+    <meta name="theme-color" content="#092720">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='brand/favicon-32.png', v='20260725-monogram-glow-v5') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='brand/favicon-16.png', v='20260725-monogram-glow-v5') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='brand/vb-icon-192.png', v='20260725-monogram-glow-v5') }}">
     <script src="{{ url_for('static', filename='lucide.min.js') }}"></script>
     <style>
         :root {
@@ -386,7 +391,7 @@
 {% endblock %}
 {% if session.user_id %}
 <nav class="nav">
-    <a href="/goal" class="brand"><i data-lucide="apple" class="logo-icon"></i>健康饮食</a>
+    <a href="/goal" class="brand"><img src="{{ url_for('static', filename='brand/vb-icon-192.png', v='20260725-monogram-glow-v5') }}" class="logo-icon brand-logo" alt="">V&amp;B</a>
     <a href="/goal" class="nav-link {{ 'active' if request.path.startswith('/goal') }}"><i data-lucide="target" class="icon-sm"></i>目标</a>
     <a href="/recognition" class="nav-link {{ 'active' if request.path.startswith('/recognition') }}"><i data-lucide="scan-eye" class="icon-sm"></i>识别</a>
     <a href="/diet" class="nav-link {{ 'active' if request.path.startswith('/diet') }}"><i data-lucide="utensils-crossed" class="icon-sm"></i>饮食</a>

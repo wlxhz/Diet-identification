@@ -29,6 +29,7 @@ apps/user-web/static/uploads/avatars/*
 
 # Android / Gradle
 .android-sdk/
+.build-tools/
 .gradle-home/
 **/.gradle/
 **/build/
@@ -50,6 +51,8 @@ legacy/*
 !legacy/README.md
 
 # Delivery and debug artifacts
+*.apk
+*.aab
 artifacts/debug/
 artifacts/releases/**/*.apk
 artifacts/releases/**/*.aab

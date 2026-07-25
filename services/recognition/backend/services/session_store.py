@@ -729,7 +729,7 @@ class SessionStore:
         methods = [food.cooking_method_name for food in foods if food.cooking_method not in {"unknown", "raw_light"}]
         method_tip = f"，已识别烹饪方式：{'、'.join(sorted(set(methods)))}" if methods else ""
         if all(food.weight_source == "visual_fallback" for food in foods):
-            return f"未检测到可用标定卡，当前克重为视觉粗估{method_tip}；放入 50mm ArUco 标定卡可提升估重稳定性。"
+            return f"未检测到可用参考物，当前克重为视觉粗估{method_tip}；放入项目 50×50 mm 参考物或兼容 ArUco 标定卡可提升估重稳定性。"
         if avg_convergence < 0.28:
             return f"已识别食物主体{method_tip}，正在积累视频帧；请保持连续推流，缓慢绕餐盘移动 5-10 秒。"
         if avg_error_ratio > 0.28:

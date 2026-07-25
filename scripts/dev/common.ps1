@@ -36,4 +36,6 @@ function Initialize-AdventureEnvironment {
     $env:RECOGNITION_ALGORITHM_DIR = Join-Path $WorkspaceRoot "services\recognition"
     $env:USER_APP_DB_PATH = $env:HEALTH_DB_PATH
     $env:ADMIN_DB_PATH = Join-Path $dataRoot "supervisor-web\admin.db"
+    $env:ADMIN_RUNTIME_DIR = Join-Path $runRoot "supervisor-web"
+    $env:ADMIN_BACKUP_DIR = Join-Path $dataRoot "supervisor-web\backups"
 }

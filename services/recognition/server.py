@@ -1,13 +1,13 @@
 """FastAPI video session backend for real-time food measurement.
 
 Run with:
-    cd D:\code\Diet-identification\demo
-    set PYTHONPATH=D:\code\Diet-identification\demo
+    cd services\recognition
+    set PYTHONPATH=.
     python server.py
 
 Or from repo root:
-    set PYTHONPATH=D:\code\Diet-identification\demo
-    python -m demo.server
+    set PYTHONPATH=services\recognition
+    python services\recognition\server.py
 """
 from __future__ import annotations
 

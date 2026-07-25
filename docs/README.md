@@ -15,6 +15,7 @@
 
 - [本地环境搭建](development/local-setup.md)
 - [测试和质量检查](development/testing.md)
+- [2026-07-25 桌面归档整合记录](development/archive-integration-20260725.md)
 
 ## 运维
 

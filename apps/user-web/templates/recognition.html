@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}食物识别 - 健康饮食{% endblock %}
+{% block title %}食物识别 - V&amp;B{% endblock %}
 
 {% block hero %}
 <div class="hero-banner recognition-hero">
@@ -62,6 +62,9 @@
     <div class="card card-accent-top" id="resultCard" style="display:none;">
         <h2><i data-lucide="notebook-pen" class="icon-md"></i>确认并添加到我的饮食</h2>
         <form method="POST" action="/diet/record">
+            <input type="hidden" name="image_data" id="recordImageData">
+            <input type="hidden" name="source_type" id="recordSourceType" value="image_recognition">
+            <input type="hidden" name="recognition_suggestions" id="recordRecognitionSuggestions">
             <div class="form-group">
                 <label><i data-lucide="chevron-down" class="icon-sm"></i> 食物</label>
                 <select name="food_name" id="foodSelect" required>
@@ -81,6 +84,9 @@
 </div>
 
 <script>
+var currentRecognitionImage = '';
+var currentRecognitionSource = 'image_recognition';
+
 function quickFood(name, weight) {
     var sel = document.getElementById('foodSelect');
     for (var i=0; i<sel.options.length; i++) {
@@ -155,6 +161,9 @@ function handleRecognitionPayload(payload) {
         '共识别 ' + payload.foods.length + ' 项 · 画面质量 ' +
         Math.round(Number((payload.quality || {}).overall || 0) * 100) + '% · ' +
         (payload.guidance || '请确认后记录');
+    document.getElementById('recordImageData').value = currentRecognitionImage;
+    document.getElementById('recordSourceType').value = currentRecognitionSource;
+    document.getElementById('recordRecognitionSuggestions').value = JSON.stringify(payload.foods || []);
     renderRecognizedFoods(payload.foods);
 }
 
@@ -212,6 +221,10 @@ window.RokidGlassesEvents = {
         try { updateRokidState(rawState); } catch (error) { showScanError(error.message); }
     },
     onFrame: function(dataUrl) {
+        currentRecognitionImage = dataUrl;
+        currentRecognitionSource = 'glasses';
+        document.getElementById('recordImageData').value = dataUrl;
+        document.getElementById('recordSourceType').value = 'glasses';
         var preview = document.getElementById('scanPreview');
         preview.src = dataUrl;
         preview.style.display = 'block';
@@ -249,6 +262,10 @@ document.getElementById('scanFile').addEventListener('change', function(event) {
     var reader = new FileReader();
     reader.onload = async function() {
         var image = String(reader.result || '');
+        currentRecognitionImage = image;
+        currentRecognitionSource = 'image_recognition';
+        document.getElementById('recordImageData').value = image;
+        document.getElementById('recordSourceType').value = 'image_recognition';
         var preview = document.getElementById('scanPreview');
         preview.src = image;
         preview.style.display = 'block';

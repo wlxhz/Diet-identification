@@ -1,8 +1,8 @@
 """
-健康饮食 App — Flask 主应用 (v2) · 多方式登录 + UI 升级
+V&B App — Flask 主应用 (v2) · 多方式登录 + UI 升级
 """
-import secrets, string, io, re, sys, os, uuid
-from datetime import datetime
+import base64, binascii, json, secrets, string, io, re, sys, os, uuid
+from datetime import datetime, timedelta
 from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, g, send_from_directory, abort
@@ -13,11 +13,15 @@ from food_db import seed_food_library
 try:
     from recognition_adapter import RecognitionUnavailable, analyze_image
 except ImportError:
-    class RecognitionUnavailable(RuntimeError):
-        pass
+    try:
+        # The desktop web app and Android app share one recognition adapter.
+        from health_diet_app.recognition_adapter import RecognitionUnavailable, analyze_image
+    except ImportError:
+        class RecognitionUnavailable(RuntimeError):
+            pass
 
-    def analyze_image(_image):
-        raise RecognitionUnavailable("网页版识别服务尚未配置，请使用 Rokid 移动端进行食物识别")
+        def analyze_image(_image):
+            raise RecognitionUnavailable("网页版识别服务尚未配置，请安装食物识别依赖后重试")
 
 RESOURCE_DIR = os.environ.get("HEALTH_RESOURCE_DIR")
 app = Flask(
@@ -31,6 +35,7 @@ def load_session_secret():
         return configured
     db_path = os.environ.get("HEALTH_DB_PATH", DB_PATH)
     secret_path = os.path.join(os.path.dirname(db_path), ".health-session-secret")
+    os.makedirs(os.path.dirname(os.path.abspath(secret_path)), exist_ok=True)
     try:
         with open(secret_path, "r", encoding="ascii") as secret_file:
             value = secret_file.read().strip()
@@ -49,10 +54,21 @@ def load_session_secret():
 
 
 app.secret_key = load_session_secret()
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+)
+
+MOTIVATIONAL_QUOTES = (
+    "每一次选择，都在塑造更好的自己",
+    "今天的坚持，是明天轻盈的底气",
+    "照顾好身体，也是在认真生活",
+    "小小的进步，也值得被看见",
+    "规律一点，健康就近一点",
+    "不必完美，持续前进就很好",
+    "认真吃饭，好好生活",
+    "把健康变成每天温柔的习惯",
 )
 
 UPLOAD_DIR = os.environ.get(
@@ -60,6 +76,8 @@ UPLOAD_DIR = os.environ.get(
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".workspace", "data", "user-web", "uploads"),
 )
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+DIET_UPLOAD_DIR = os.path.join(os.path.dirname(UPLOAD_DIR), "diet")
+os.makedirs(DIET_UPLOAD_DIR, exist_ok=True)
 
 
 def _avatar_extension(header):
@@ -100,15 +118,129 @@ def remove_managed_avatar(avatar_url):
             pass
 
 
+def save_diet_image(data_url):
+    """Validate and persist a food image supplied as a browser data URL."""
+    if not data_url:
+        return ""
+    match = re.fullmatch(
+        r"data:image/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=\r\n]+)",
+        data_url.strip(),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        raise ValueError("食物图片格式无效，请使用 JPG、PNG 或 WebP 图片")
+    try:
+        content = base64.b64decode(match.group(2), validate=True)
+    except (ValueError, binascii.Error) as error:
+        raise ValueError("食物图片无法解码，请重新选择") from error
+    if not content or len(content) > 4 * 1024 * 1024:
+        raise ValueError("食物图片不能超过 4 MB")
+    extension = _avatar_extension(content[:16])
+    if extension not in ("jpg", "png", "webp"):
+        raise ValueError("食物图片仅支持 JPG、PNG 或 WebP 格式")
+    filename = f"{uuid.uuid4().hex}.{extension}"
+    with open(os.path.join(DIET_UPLOAD_DIR, filename), "xb") as image_file:
+        image_file.write(content)
+    return f"/uploads/diet/{filename}"
+
+
+def remove_managed_diet_image(image_url):
+    prefix = "/uploads/diet/"
+    if not image_url or not image_url.startswith(prefix):
+        return
+    filename = os.path.basename(image_url)
+    path = os.path.join(DIET_UPLOAD_DIR, filename)
+    if os.path.isfile(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def clean_recognition_suggestions(raw):
+    """Keep only the small, useful part of a recognition response."""
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if isinstance(value, dict):
+        value = value.get("foods", [])
+    if not isinstance(value, list):
+        return []
+    cleaned = []
+    for item in value[:8]:
+        if not isinstance(item, dict):
+            continue
+        food_name = str(item.get("record_food_name") or item.get("food_name") or "").strip()[:80]
+        display_name = str(item.get("name") or food_name).strip()[:80]
+        if not food_name:
+            continue
+        try:
+            weight = float(item.get("estimated_weight_g") or item.get("weight_grams") or 0)
+        except (TypeError, ValueError):
+            weight = 0
+        try:
+            confidence = float(item.get("confidence") or 0)
+        except (TypeError, ValueError):
+            confidence = 0
+        cleaned.append({
+            "food_name": food_name,
+            "display_name": display_name or food_name,
+            "weight_grams": round(weight, 1) if 0.5 <= weight <= 5000 else None,
+            "confidence": max(0, min(1, confidence)),
+        })
+    return cleaned
+
+
+def encode_recognition_suggestions(raw):
+    suggestions = clean_recognition_suggestions(raw)
+    return json.dumps(suggestions, ensure_ascii=False, separators=(",", ":")) if suggestions else ""
+
+
+def diet_image_data_url(image_url):
+    if not image_url or not image_url.startswith("/uploads/diet/"):
+        return ""
+    filename = os.path.basename(image_url)
+    path = os.path.join(DIET_UPLOAD_DIR, filename)
+    if not os.path.isfile(path):
+        return ""
+    extension = os.path.splitext(filename)[1].lower()
+    mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}.get(extension)
+    if not mime:
+        return ""
+    with open(path, "rb") as image_file:
+        encoded = base64.b64encode(image_file.read()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
 @app.errorhandler(413)
 def upload_too_large(error):
-    flash("头像文件不能超过 5 MB", "error")
-    return redirect(request.referrer or url_for("profile"))
+    flash("上传内容不能超过 8 MB", "error")
+    return redirect(request.referrer or url_for("diet"))
 
 
 @app.route("/uploads/avatars/<path:filename>")
 def uploaded_avatar(filename):
     return send_from_directory(UPLOAD_DIR, filename)
+
+
+@app.route("/uploads/diet/<path:filename>")
+def uploaded_diet_image(filename):
+    current_user_id = session.get("user_id")
+    if not current_user_id:
+        abort(403)
+    image_url = f"/uploads/diet/{os.path.basename(filename)}"
+    record = db().execute(
+        "SELECT user_id FROM diet_records WHERE image_url=? ORDER BY id DESC LIMIT 1",
+        (image_url,),
+    ).fetchone()
+    if not record:
+        abort(404)
+    if record["user_id"] != current_user_id and not can_view_shared(current_user_id, record["user_id"], "diet"):
+        abort(403)
+    return send_from_directory(DIET_UPLOAD_DIR, filename)
 
 # ── 初始化 ──────────────────────────────────────────────
 with app.app_context():
@@ -133,6 +265,16 @@ def db():
 
 @app.before_request
 def protect_post_requests():
+    if "user_id" in session:
+        current = db().execute("SELECT id,active,last_active_at FROM users WHERE id=?", (session["user_id"],)).fetchone()
+        if not current or not current["active"]:
+            session.clear()
+            flash("账号已被禁用，请联系管理员。", "error")
+            if request.endpoint != "login":
+                return redirect(url_for("login"))
+        elif not current["last_active_at"] or current["last_active_at"] < (datetime.now() - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S"):
+            db().execute("UPDATE users SET last_active_at=CURRENT_TIMESTAMP WHERE id=?", (current["id"],))
+            db().commit()
     if request.method != "POST":
         return None
     expected = session.get("csrf_token", "")
@@ -164,7 +306,18 @@ def login_required(f):
 def get_user():
     if "user_id" not in session:
         return None
-    return db().execute("SELECT * FROM users WHERE id=?", (session["user_id"],)).fetchone()
+    return db().execute("SELECT * FROM users WHERE id=? AND active=1", (session["user_id"],)).fetchone()
+
+
+def start_user_session(user):
+    if not user["active"]:
+        flash("账号已被禁用，请联系管理员。", "error")
+        return False
+    session["user_id"] = user["id"]
+    session["role"] = user["role"]
+    db().execute("UPDATE users SET last_active_at=CURRENT_TIMESTAMP WHERE id=?", (user["id"],))
+    db().commit()
+    return True
 
 
 @app.context_processor
@@ -405,7 +558,8 @@ def login():
                 flash("账号未注册"); return redirect(url_for("login"))
             if not check_password_hash(user["password_hash"], password):
                 flash("密码错误"); return redirect(url_for("login"))
-            session["user_id"] = user["id"]; session["role"] = user["role"]
+            if not start_user_session(user):
+                return redirect(url_for("login"))
             return redirect(url_for("goal"))
 
         # 短信验证码登录
@@ -425,7 +579,8 @@ def login():
             user = c.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
             if not user:
                 flash("手机号未注册"); return redirect(url_for("login"))
-            session["user_id"] = user["id"]; session["role"] = user["role"]
+            if not start_user_session(user):
+                return redirect(url_for("login"))
             return redirect(url_for("goal"))
 
         # 邮箱验证码登录
@@ -445,7 +600,8 @@ def login():
             user = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
             if not user:
                 flash("邮箱未注册"); return redirect(url_for("login"))
-            session["user_id"] = user["id"]; session["role"] = user["role"]
+            if not start_user_session(user):
+                return redirect(url_for("login"))
             return redirect(url_for("goal"))
 
     return render_template("login.html")
@@ -683,7 +839,8 @@ def goal():
 
     return render_template("goal.html", user=user, bmr=round(bmr), tdee=tdee,
                            today_cal=today_cal, now=datetime.now(), nutrition=nutrition,
-                           micro_intake=micro_intake)
+                           micro_intake=micro_intake,
+                           motivational_quote=secrets.choice(MOTIVATIONAL_QUOTES))
 
 
 @app.route("/goal/setup", methods=["POST"])
@@ -721,10 +878,29 @@ def diet():
         abort(404)
     records = c.execute(
         "SELECT dr.*, u.nickname FROM diet_records dr JOIN users u ON dr.user_id=u.id "
-        "WHERE dr.user_id=? ORDER BY dr.intake_time DESC LIMIT 100", (selected_user_id,)
+        "WHERE dr.user_id=? ORDER BY dr.intake_time DESC LIMIT 200", (selected_user_id,)
     ).fetchall()
+    today_text = datetime.now().strftime("%Y-%m-%d")
+    today_records = [record for record in records if record["intake_time"] and record["intake_time"][:10] == today_text]
+    history_records = [record for record in records if not record["intake_time"] or record["intake_time"][:10] != today_text]
+    active_tab = request.args.get("tab", "today")
+    if active_tab not in ("today", "history"):
+        active_tab = "today"
+    correction_record = None
+    correction_suggestions = []
+    correction_id = request.args.get("correct", type=int)
+    if correction_id and selected_user_id == user["id"]:
+        correction_record = c.execute(
+            "SELECT * FROM diet_records WHERE id=? AND user_id=?",
+            (correction_id, user["id"]),
+        ).fetchone()
+        if correction_record:
+            correction_suggestions = clean_recognition_suggestions(correction_record["recognition_suggestions"])
     return render_template("diet.html", user=user, viewed_user=viewed_user, foods=foods,
-                           records=records, connections=connections, now=datetime.now())
+                           records=records, today_records=today_records, history_records=history_records,
+                           connections=connections, now=datetime.now(), active_tab=active_tab,
+                           correction_record=correction_record,
+                           correction_suggestions=correction_suggestions)
 
 
 @app.route("/recognition")
@@ -755,10 +931,40 @@ def diet_record():
     c = db(); food = c.execute("SELECT * FROM food_library WHERE name=?", (fn,)).fetchone()
     if not food: flash("食物不在库中"); return redirect(url_for("diet"))
     cal = round(food["calories_per_100g"] * weight_value / 100, 1)
+    factor = weight_value / 100.0
+    protein = round(food["protein_g"] * factor, 1)
+    fat = round(food["fat_g"] * factor, 1)
+    carbs = round(food["carbs_g"] * factor, 1)
+    fiber = round(food["fiber_g"] * factor, 1)
+    meal_type = request.form.get("meal_type", "").strip()
+    if meal_type not in ("", "breakfast", "lunch", "dinner", "snack"):
+        meal_type = ""
+    description = request.form.get("description", "").strip()
     if not it: it = datetime.now().strftime("%Y-%m-%d %H:%M")
-    c.execute("INSERT INTO diet_records (user_id,food_name,weight_grams,calories,intake_time) VALUES (?,?,?,?,?)",
-              (user["id"], fn, weight_value, cal, it)); c.commit()
-    flash(f"已记录：{fn} {weight_value}g = {cal}kcal"); return redirect(url_for("diet"))
+    source_type = request.form.get("source_type", "manual").strip()
+    if source_type not in ("manual", "image_recognition", "glasses"):
+        source_type = "manual"
+    image_url = ""
+    try:
+        image_url = save_diet_image(request.form.get("image_data", "").strip())
+    except ValueError as error:
+        flash(str(error), "error")
+        return redirect(url_for("recognition") if source_type != "manual" else url_for("diet"))
+    suggestions_json = encode_recognition_suggestions(request.form.get("recognition_suggestions", ""))
+    try:
+        c.execute(
+            "INSERT INTO diet_records "
+            "(user_id,food_name,weight_grams,calories,protein_g,fat_g,carbs_g,fiber_g,meal_type,description,"
+            "intake_time,image_url,source_type,recognition_suggestions) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (user["id"], fn, weight_value, cal, protein, fat, carbs, fiber, meal_type, description,
+             it, image_url, source_type, suggestions_json),
+        )
+        c.commit()
+    except Exception:
+        remove_managed_diet_image(image_url)
+        raise
+    flash(f"已记录：{fn} {weight_value}g = {cal}kcal")
+    return redirect(url_for("diet", tab="today"))
 
 
 @app.route("/api/recognition/analyze", methods=["POST"])
@@ -834,13 +1040,101 @@ def video_intake_import():
     c.commit()
     total_cal = round(sum(item["calories"] for item in imported), 1)
     return jsonify({"ok": True, "imported": imported, "skipped": skipped, "total_calories": total_cal})
+@app.route("/api/diet/<int:rid>/recommendations", methods=["POST"])
+@login_required
+def diet_recommendations(rid):
+    user = get_user(); c = db()
+    record = c.execute(
+        "SELECT * FROM diet_records WHERE id=? AND user_id=?", (rid, user["id"])
+    ).fetchone()
+    if not record:
+        abort(404)
+    image_data = diet_image_data_url(record["image_url"])
+    if not image_data:
+        return jsonify({"ok": False, "error": "这条记录没有可重新分析的原始图片"}), 400
+    try:
+        result = analyze_image(image_data)
+    except RecognitionUnavailable as error:
+        return jsonify({"ok": False, "error": str(error), "code": "recognition_unavailable"}), 503
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error), "code": "invalid_image"}), 400
+    except Exception:
+        app.logger.exception("Diet recommendation refresh failed")
+        return jsonify({"ok": False, "error": "图片重新识别失败，请稍后重试"}), 500
+    suggestions_json = encode_recognition_suggestions(result.get("foods", []))
+    c.execute("UPDATE diet_records SET recognition_suggestions=? WHERE id=?", (suggestions_json, rid))
+    c.commit()
+    return jsonify({"ok": True, **result})
+
+
+@app.route("/diet/correct/<int:rid>", methods=["POST"])
+@login_required
+def diet_correct(rid):
+    user = get_user(); c = db()
+    record = c.execute(
+        "SELECT * FROM diet_records WHERE id=? AND user_id=?", (rid, user["id"])
+    ).fetchone()
+    if not record:
+        abort(404)
+    food_name = request.form.get("food_name", "").strip()
+    weight_raw = request.form.get("weight_grams", "").strip()
+    try:
+        weight_value = parse_number(weight_raw, "克重", 0.5, 5000, required=True)
+    except ValueError as error:
+        flash(str(error), "error")
+        return redirect(url_for("diet", tab=request.form.get("return_tab", "today"), correct=rid))
+    food = c.execute("SELECT * FROM food_library WHERE name=?", (food_name,)).fetchone()
+    if not food:
+        flash("请选择食物库中的食物", "error")
+        return redirect(url_for("diet", tab=request.form.get("return_tab", "today"), correct=rid))
+    calories = round(food["calories_per_100g"] * weight_value / 100, 1)
+    factor = weight_value / 100.0
+    protein = round(food["protein_g"] * factor, 1)
+    fat = round(food["fat_g"] * factor, 1)
+    carbs = round(food["carbs_g"] * factor, 1)
+    fiber = round(food["fiber_g"] * factor, 1)
+    new_image_data = request.form.get("image_data", "").strip()
+    new_image_url = ""
+    if new_image_data:
+        try:
+            new_image_url = save_diet_image(new_image_data)
+        except ValueError as error:
+            flash(str(error), "error")
+            return redirect(url_for("diet", tab=request.form.get("return_tab", "today"), correct=rid))
+    suggestions_json = encode_recognition_suggestions(request.form.get("recognition_suggestions", ""))
+    image_url = new_image_url or record["image_url"]
+    if not suggestions_json:
+        suggestions_json = record["recognition_suggestions"] or ""
+    try:
+        c.execute(
+            "UPDATE diet_records SET food_name=?,weight_grams=?,calories=?,protein_g=?,fat_g=?,carbs_g=?,fiber_g=?,image_url=?,"
+            "recognition_suggestions=?,original_food_name=COALESCE(original_food_name,?),"
+            "original_weight_grams=COALESCE(original_weight_grams,?),corrected_at=? "
+            "WHERE id=? AND user_id=?",
+            (food_name, weight_value, calories, protein, fat, carbs, fiber, image_url, suggestions_json,
+             record["food_name"], record["weight_grams"],
+             datetime.now().strftime("%Y-%m-%d %H:%M"), rid, user["id"]),
+        )
+        c.commit()
+    except Exception:
+        remove_managed_diet_image(new_image_url)
+        raise
+    if new_image_url and record["image_url"] != new_image_url:
+        remove_managed_diet_image(record["image_url"])
+    flash(f"已修正为：{food_name} {weight_value}g = {calories}kcal")
+    return redirect(url_for("diet", tab=request.form.get("return_tab", "today")))
 
 
 @app.route("/diet/delete/<int:rid>", methods=["POST"])
 @login_required
 def diet_delete(rid):
-    u = get_user(); c = db(); c.execute("DELETE FROM diet_records WHERE id=? AND user_id=?", (rid, u["id"])); c.commit()
-    flash("记录已删除"); return redirect(url_for("diet"))
+    u = get_user(); c = db()
+    record = c.execute("SELECT image_url FROM diet_records WHERE id=? AND user_id=?", (rid, u["id"])).fetchone()
+    c.execute("DELETE FROM diet_records WHERE id=? AND user_id=?", (rid, u["id"])); c.commit()
+    if record:
+        remove_managed_diet_image(record["image_url"])
+    flash("记录已删除")
+    return redirect(url_for("diet", tab=request.form.get("return_tab", "today")))
 
 
 # ── 绑定 ────────────────────────────────────────────────
@@ -1066,7 +1360,7 @@ if __name__ == "__main__":
         pid_file.write(str(os.getpid()))
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
-    print("\n🍎  健康饮食 App 启动中...\n   访问 http://127.0.0.1:5000\n")
+    print("\n◆  V&B App 启动中...\n   访问 http://127.0.0.1:5000\n")
     try:
         app.run(debug=False, use_reloader=False, host="127.0.0.1", port=5000)
     finally:

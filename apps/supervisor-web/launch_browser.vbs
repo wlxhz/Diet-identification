@@ -1,44 +1,28 @@
 Option Explicit
 
-Dim fso, shell, shellApp, projectRoot, appUrl, pythonExe, appPath
-Dim candidates, candidate, request, attempt, ready
+Dim fso, shell, shellApp, appRoot, workspaceRoot, startScript, appUrl
+Dim attempt, ready
 
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 Set shellApp = CreateObject("Shell.Application")
 
-projectRoot = fso.GetParentFolderName(WScript.ScriptFullName)
+appRoot = fso.GetParentFolderName(WScript.ScriptFullName)
+workspaceRoot = fso.GetParentFolderName(fso.GetParentFolderName(appRoot))
+startScript = fso.BuildPath(workspaceRoot, "scripts\dev\start-supervisor-web.ps1")
 appUrl = "http://127.0.0.1:5100"
-appPath = fso.BuildPath(projectRoot, "app.py")
-pythonExe = ""
-
-candidates = Array( _
-    fso.BuildPath(projectRoot, ".venv\Scripts\pythonw.exe"), _
-    fso.BuildPath(projectRoot, ".venv\Scripts\python.exe"), _
-    "C:\Users\czy08\AppData\Local\hermes\hermes-agent\venv\Scripts\pythonw.exe", _
-    "C:\Users\czy08\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe" _
-)
-
-For Each candidate In candidates
-    If fso.FileExists(candidate) Then
-        pythonExe = candidate
-        Exit For
-    End If
-Next
-
 ready = IsApplicationReady(appUrl)
 
 If Not ready Then
-    If pythonExe = "" Then
-        MsgBox "Python was not found. The admin application cannot start.", vbCritical, "Admin application error"
+    If Not fso.FileExists(startScript) Then
+        MsgBox "Cannot find the canonical supervisor start script: " & startScript, vbCritical, "Admin application error"
         WScript.Quit 1
     End If
 
-    shell.CurrentDirectory = projectRoot
-    shell.Environment("PROCESS")("PYTHONUTF8") = "1"
-    shell.Run Q(pythonExe) & " " & Q(appPath), 0, False
+    shell.CurrentDirectory = workspaceRoot
+    shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " & Q(startScript), 0, False
 
-    For attempt = 1 To 100
+    For attempt = 1 To 150
         WScript.Sleep 200
         If IsApplicationReady(appUrl) Then
             ready = True
@@ -52,7 +36,7 @@ If ready Then
     WScript.Quit 0
 End If
 
-MsgBox "The admin application did not start. Please try again.", vbCritical, "Admin application error"
+MsgBox "The admin application did not start. Run scripts\dev\start-supervisor-web.ps1 to inspect the error.", vbCritical, "Admin application error"
 WScript.Quit 1
 
 Function IsApplicationReady(url)

@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $projectRoot = $PSScriptRoot
 $workspaceRoot = Split-Path -Parent (Split-Path -Parent $projectRoot)
@@ -29,7 +29,8 @@ function Get-SourceStamp {
     $sourceFiles = @(
         (Join-Path $projectRoot "app.py"),
         (Join-Path $projectRoot "database.py"),
-        (Join-Path $projectRoot "food_db.py")
+        (Join-Path $projectRoot "food_db.py"),
+        (Join-Path $projectRoot "recognition_adapter.py")
     )
     $sourceFiles += Get-ChildItem -LiteralPath (Join-Path $projectRoot "templates") -File -Recurse | Select-Object -ExpandProperty FullName
     $sourceFiles += Get-ChildItem -LiteralPath (Join-Path $projectRoot "static") -File -Recurse |
@@ -49,12 +50,25 @@ if (Test-AppReady) {
         Write-Error "检测到旧版服务，但找不到进程记录。请关闭旧服务后重新打开应用。"
         exit 1
     }
-    $runningPid = 0
-    if (-not [int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$runningPid)) {
-        Write-Error "服务进程记录无效，请关闭旧服务后重新打开应用。"
+    $pidText = (Get-Content -LiteralPath $pidFile -Raw).Trim()
+    try {
+        [int]$serviceProcessId = $pidText
+    } catch {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        Write-Error "服务进程记录无效，已清理旧记录，请重新打开应用。"
         exit 1
     }
-    Stop-Process -Id $runningPid -Force -ErrorAction SilentlyContinue
+    if ($serviceProcessId -le 0) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        Write-Error "服务进程记录无效，已清理旧记录，请重新打开应用。"
+        exit 1
+    }
+    $runningProcess = Get-Process -Id $serviceProcessId -ErrorAction SilentlyContinue
+    if ($null -ne $runningProcess) {
+        Stop-Process -Id $serviceProcessId -Force -ErrorAction SilentlyContinue
+    } else {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    }
     for ($attempt = 0; $attempt -lt 20 -and (Test-AppReady); $attempt++) {
         Start-Sleep -Milliseconds 150
     }

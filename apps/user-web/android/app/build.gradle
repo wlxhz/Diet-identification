@@ -112,7 +112,10 @@ tasks.register("syncRokidStreamerApk") {
     dependsOn("syncHealthAssets")
     def sourceProvider = providers.provider { resolveStreamerApk() }
     def targetProvider = generatedAssets.map { it.file("rokid-glasses-streamer.apk") }
-    inputs.file(sourceProvider).optional()
+    inputs.files(providers.provider {
+        def source = sourceProvider.get()
+        return source.isFile() ? [source] : []
+    })
     outputs.file(targetProvider)
     doLast {
         def target = targetProvider.get().asFile
