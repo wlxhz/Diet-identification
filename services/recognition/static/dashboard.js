@@ -66,8 +66,14 @@ function connectEvents() {
 
 async function finishSession() {
   if (!state.session) return;
-  const report = await fetchJson(`/api/sessions/${state.session.session_id}/finish`, { method: "POST" });
-  renderReport(report);
+  qs("#reportState").textContent = "生成中…";
+  try {
+    const report = await fetchJson(`/api/sessions/${state.session.session_id}/finish`, { method: "POST" });
+    renderReport(report);
+  } catch (error) {
+    qs("#reportState").textContent = "生成失败";
+    qs("#reportJson").textContent = `生成报告失败：${error.message}\n\n如果后端重启过，旧会话已失效，请点击"新建会话"重新测量。`;
+  }
 }
 
 async function copyCaptureUrl() {
@@ -98,7 +104,31 @@ function render(nextState) {
   renderOverlay(nextState);
   renderFoods(nextState.foods);
   renderSummary(nextState.foods);
+  renderIntake(nextState);
   renderQuality(nextState.measurement_quality);
+}
+
+const intakeStateLabels = {
+  utensil_contact_food: "接触食物",
+  food_lifted: "夹起食物",
+  moving_to_mouth: "送向嘴边",
+  intake_confirmed: "确认进食",
+  returned_to_plate: "放回盘中",
+  uncertain: "动作不明",
+};
+
+function renderIntake(nextState) {
+  const foods = nextState.foods || [];
+  const intakeCalories = foods.reduce((acc, food) => {
+    const perGramKcal = food.estimated_weight_g > 0 ? food.nutrition.calories_kcal / food.estimated_weight_g : 0;
+    return acc + (food.intake_weight_sum_g || 0) * perGramKcal;
+  }, 0);
+  qs("#intakeWeight").textContent = `${(nextState.confirmed_intake_weight_g || 0).toFixed(1)}g`;
+  qs("#intakeCalories").textContent = `${intakeCalories.toFixed(1)}kcal`;
+  qs("#intakeEventCount").textContent = `${nextState.confirmed_intake_event_count || 0} 口`;
+  const events = nextState.intake_events || [];
+  const last = events[events.length - 1];
+  qs("#lastIntakeState").textContent = last ? (intakeStateLabels[last.state] || last.state) : "--";
 }
 
 function renderOverlay(nextState) {
@@ -161,7 +191,7 @@ function renderFoods(foods) {
       <td>${food.nutrition.fat_g}g</td>
       <td>${food.sample_count || food.visible_frames || 1}</td>
       <td>${Math.round((food.convergence || 0) * 100)}%</td>
-      <td>${Math.round(food.weight_confidence * 100)}%<small>${food.confirmed_intake_event_count || 0} 次摄入</small></td>
+      <td>${Math.round(food.weight_confidence * 100)}%<small>已吃 ${(food.intake_weight_sum_g || 0).toFixed(1)}g / ${food.confirmed_intake_event_count || 0} 口</small></td>
     </tr>
   `).join("");
 }
@@ -227,7 +257,31 @@ async function fetchJson(url, options) {
   return response.json();
 }
 
-createSession().catch((error) => {
-  updateStatus("error", "创建失败");
+async function initFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const sessionId = params.get("session_id");
+  if (!sessionId) {
+    await createSession();
+    return;
+  }
+  try {
+    state.session = { session_id: sessionId };
+    const snapshot = await fetchJson(`/api/sessions/${sessionId}/state`);
+    state.session.capture_url = snapshot.capture_url;
+    qs("#sessionId").value = sessionId;
+    qs("#captureUrl").value = snapshot.capture_url || "";
+    qs("#copyUrlBtn").disabled = false;
+    qs("#openCaptureBtn").disabled = false;
+    qs("#finishBtn").disabled = false;
+    render(snapshot);
+    connectEvents();
+  } catch (error) {
+    updateStatus("error", "会话加载失败");
+    qs("#guidanceBadge").textContent = error.message;
+  }
+}
+
+initFromUrl().catch((error) => {
+  updateStatus("error", "初始化失败");
   qs("#guidanceBadge").textContent = error.message;
 });

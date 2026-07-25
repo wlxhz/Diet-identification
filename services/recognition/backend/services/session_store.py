@@ -57,6 +57,7 @@ class TrackAggregate:
     reference_weight_g: float | None = None
     reference_area_ratio: float | None = None
     scale_correction_events: int = 0
+    peak_weight_g: float = 0.0
 
 
 class SessionRecord:
@@ -72,6 +73,7 @@ class SessionRecord:
         self.consumption_tracker = ConsumptionTracker()
         self.next_track_index = 1
         self.intake_events: list[IntakeEvent] = []
+        self.last_food_analysis_monotonic = 0.0
         self.report: Report | None = None
         self.state = SessionState(
             session_id=session_id,
@@ -170,6 +172,19 @@ class SessionStore:
     async def process_frame(self, session_id: str, upload: FrameUpload) -> SessionState:
         record = self.validate_token(session_id, upload.token)
         decoded = self.analyzer.decode_data_url(upload.image)
+        return await self._ingest_decoded(session_id, record, decoded)
+
+    async def process_jpg_frame(self, session_id: str, jpg_bytes: bytes) -> SessionState:
+        record = self.get(session_id)
+        from io import BytesIO
+
+        from PIL import Image
+
+        image = Image.open(BytesIO(jpg_bytes)).convert("RGB")
+        decoded = DecodedFrame(image=image, width=image.width, height=image.height, jpg_bytes=jpg_bytes)
+        return await self._ingest_decoded(session_id, record, decoded)
+
+    async def _ingest_decoded(self, session_id: str, record: SessionRecord, decoded: DecodedFrame) -> SessionState:
         record.latest_frame_bytes = decoded.jpg_bytes
         record.state.frame_count += 1
         record.state.status = "measuring"
@@ -209,6 +224,19 @@ class SessionStore:
         frame_count: int,
         elapsed_seconds: float,
     ) -> None:
+        now = time.monotonic()
+        run_food_analysis = (
+            not record.state.foods
+            or (now - record.last_food_analysis_monotonic) >= 1.2
+        )
+        if not run_food_analysis:
+            # Fast path: utensil detection only, so bite trajectories are
+            # captured at full frame rate between heavy segmentation passes.
+            await asyncio.to_thread(self._update_intake_events, record, decoded, frame_count, elapsed_seconds)
+            record.state.analyzed_frame_count += 1
+            await self.broadcast(session_id, "frame_analyzed", {"state": record.state.model_dump(mode="json")})
+            return
+
         try:
             foods, quality, guidance = await asyncio.to_thread(self.analyzer.analyze, decoded, frame_count, elapsed_seconds)
         except Exception as exc:
@@ -216,25 +244,26 @@ class SessionStore:
             await self.broadcast(session_id, "frame_analyzed", {"state": record.state.model_dump(mode="json")})
             return
 
+        record.last_food_analysis_monotonic = now
         record.state.analyzer = self.analyzer.backend_name
         record.state.model_name = self.analyzer.model_name
         record.state.analyzed_frame_count += 1
         record.state.foods = self._merge_tracks(record, foods, elapsed_seconds)
-        self._update_intake_events(record, decoded, frame_count)
+        self._update_intake_events(record, decoded, frame_count, elapsed_seconds)
         record.state.measurement_quality = self._merge_quality(quality, record.state.foods)
         if record.state.foods:
             guidance = self._temporal_guidance(record.state.foods, guidance)
         record.state.guidance = Guidance(message=guidance, needed_action=self._guidance_action(guidance))
         await self.broadcast(session_id, "frame_analyzed", {"state": record.state.model_dump(mode="json")})
 
-    def _update_intake_events(self, record: SessionRecord, decoded: DecodedFrame, frame_count: int) -> None:
+    def _update_intake_events(self, record: SessionRecord, decoded: DecodedFrame, frame_count: int, elapsed_seconds: float) -> None:
         if not record.state.foods:
             return
         arr = np.array(decoded.image)
         utensils = detect_utensils(arr, record.state.foods)
         scale = self._scale_from_foods(record.state.foods)
         events = record.consumption_tracker.build_events(
-            timestamp_ms=frame_count,
+            timestamp_ms=int(elapsed_seconds * 1000),
             foods=record.state.foods,
             utensils=utensils,
             scale=scale,
@@ -297,6 +326,7 @@ class SessionStore:
                 aggregate.visible_frames += 1
                 aggregate.missed_frames = 0
                 aggregate.last_seen_seconds = elapsed_seconds
+            aggregate.peak_weight_g = max(aggregate.peak_weight_g, aggregate.track.estimated_weight_g)
             matched_track_ids.add(best_id)
 
         for track_id, aggregate in list(record.track_memory.items()):
@@ -712,6 +742,11 @@ class SessionStore:
         record = self.get(session_id)
         record.state.status = "completed"
         totals = self._totals(record.state.foods)
+
+        def _intake_kcal(food: FoodTrack) -> float:
+            profile = profile_for_key(food.profile_key)
+            return round(food.intake_weight_sum_g * profile.calories_kcal_per_100g / 100.0, 1)
+
         report = Report(
             report_id=f"report_{session_id.split('_')[-1]}",
             session_id=session_id,
@@ -746,6 +781,7 @@ class SessionStore:
                     "consumption_state": food.consumption_state,
                     "remaining_ratio": food.remaining_ratio,
                     "intake_weight_sum_g": food.intake_weight_sum_g,
+                    "intake_calories_kcal": _intake_kcal(food),
                     "confirmed_intake_event_count": food.confirmed_intake_event_count,
                     "volume_ml": food.volume_ml,
                     "calories_kcal": food.nutrition.calories_kcal,
@@ -767,6 +803,14 @@ class SessionStore:
                 "calibrated_weight_g": round(sum(food.estimated_weight_g for food in record.state.foods if food.weight_source in {"aruco_calibrated", "container_model"}), 1),
                 "rough_weight_g": round(sum(food.estimated_weight_g for food in record.state.foods if food.weight_source == "visual_fallback"), 1),
                 "total_intake_weight_g": record.state.confirmed_intake_weight_g,
+                "total_intake_calories_kcal": round(sum(_intake_kcal(food) for food in record.state.foods), 1),
+                "plate_diff_weight_g": round(
+                    sum(
+                        max(0.0, aggregate.peak_weight_g - aggregate.track.estimated_weight_g)
+                        for aggregate in record.track_memory.values()
+                    ),
+                    1,
+                ),
                 "utensil_event_count": record.state.utensil_event_count,
                 "confirmed_intake_event_count": record.state.confirmed_intake_event_count,
             }

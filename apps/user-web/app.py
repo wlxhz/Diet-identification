@@ -779,6 +779,63 @@ def recognition_analyze():
     return jsonify({"ok": True, **result})
 
 
+@app.route("/api/video-intake/import", methods=["POST"])
+@login_required
+def video_intake_import():
+    payload = request.get_json(silent=True) or {}
+    session_id = str(payload.get("session_id", "")).strip()
+    if not session_id or not re.fullmatch(r"sess_[0-9_a-f]+", session_id):
+        return jsonify({"ok": False, "error": "session_id 无效"}), 400
+
+    import json as _json
+    import ssl
+    import urllib.request
+
+    backend = os.environ.get("VIDEO_BACKEND_URL", "https://127.0.0.1:8000")
+    cert_path = os.environ.get(
+        "VIDEO_BACKEND_CA",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "services", "recognition", "cert.pem"),
+    )
+    if os.path.exists(cert_path):
+        ctx = ssl.create_default_context(cafile=cert_path)
+        ctx.check_hostname = False
+    else:
+        ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(f"{backend}/api/sessions/{session_id}/state", context=ctx, timeout=10) as resp:
+            state = _json.loads(resp.read())
+    except Exception:
+        return jsonify({"ok": False, "error": "无法连接视频后端或会话不存在"}), 502
+
+    try:
+        from recognition_adapter import RECORD_NAME_BY_PROFILE
+    except ImportError:
+        RECORD_NAME_BY_PROFILE = {}
+
+    user = get_user()
+    c = db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    imported, skipped = [], []
+    for food in state.get("foods", []):
+        weight = float(food.get("intake_weight_sum_g") or 0)
+        if weight < 1:
+            continue
+        name = RECORD_NAME_BY_PROFILE.get(food.get("profile_key")) or food.get("name")
+        lib = c.execute("SELECT * FROM food_library WHERE name=?", (name,)).fetchone()
+        if not lib:
+            skipped.append({"name": name, "weight_g": round(weight, 1), "reason": "不在食物库"})
+            continue
+        cal = round(lib["calories_per_100g"] * weight / 100, 1)
+        c.execute(
+            "INSERT INTO diet_records (user_id,food_name,weight_grams,calories,intake_time) VALUES (?,?,?,?,?)",
+            (user["id"], name, round(weight, 1), cal, now),
+        )
+        imported.append({"name": name, "weight_g": round(weight, 1), "calories": cal})
+    c.commit()
+    total_cal = round(sum(item["calories"] for item in imported), 1)
+    return jsonify({"ok": True, "imported": imported, "skipped": skipped, "total_calories": total_cal})
+
+
 @app.route("/diet/delete/<int:rid>", methods=["POST"])
 @login_required
 def diet_delete(rid):

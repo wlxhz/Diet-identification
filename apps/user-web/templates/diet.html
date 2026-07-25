@@ -87,6 +87,36 @@
             <button type="button" class="action-item" onclick="quickFood('西兰花',150)"><span class="action-icon"><i data-lucide="leafy-green"></i></span><span class="action-label">西兰花 150g</span></button>
         </div>
     </div>
+
+    <div class="card card-accent-blue" style="text-align:center;">
+        <h2><i data-lucide="video" class="icon-md"></i>实时视频识别</h2>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:16px;">持续采集眼镜视频流，电脑后端逐帧分析并融合结果。适合记录一餐的完整摄入过程。</p>
+
+        <div id="videoControls" style="display:none;max-width:620px;margin:0 auto 18px;text-align:left;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--blue-light);">
+            <div style="font-weight:700;margin-bottom:10px;color:var(--blue-dark);"><i data-lucide="tv" class="icon-sm"></i> 视频后端</div>
+            <div class="form-group" style="margin-bottom:10px;">
+                <label>电脑视频服务地址</label>
+                <input id="videoBackendUrl" type="url" inputmode="url" placeholder="https://192.168.1.100:8000">
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-primary btn-sm" type="button" onclick="createVideoSession()"><i data-lucide="plus-circle" class="icon-sm"></i> 创建视频会话</button>
+                <button class="btn btn-secondary btn-sm" type="button" onclick="openVideoDashboard()"><i data-lucide="layout-dashboard" class="icon-sm"></i> 打开识别结果页</button>
+                <button class="btn btn-danger btn-sm" type="button" onclick="finishVideoSession()"><i data-lucide="square" class="icon-sm"></i> 结束会话</button>
+            </div>
+            <div id="videoState" style="font-size:12px;color:var(--text2);margin-top:10px;">等待创建视频会话</div>
+        </div>
+
+        <div id="videoResult" style="display:none;max-width:620px;margin:0 auto;text-align:left;">
+            <div style="display:grid;gap:10px;">
+                <div id="videoFoods" style="display:grid;gap:10px;"></div>
+                <div id="videoIntake" style="display:none;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--orange-light);">
+                    <div style="font-weight:700;font-size:13px;color:var(--orange);margin-bottom:6px;"><i data-lucide="utensils" class="icon-sm"></i> 检测到进食事件</div>
+                    <div id="videoIntakeList" style="font-size:12px;color:var(--text2);"></div>
+                </div>
+                <div id="videoGuidance" style="font-size:12px;color:var(--text3);"></div>
+            </div>
+        </div>
+    </div>
 </div>
 {% endif %}
 
@@ -140,6 +170,99 @@ function quickFood(name,weight){
     for(var i=0;i<select.options.length;i++){if(select.options[i].value===name){select.selectedIndex=i;break;}}
     document.getElementById('weightInput').value=weight;
     document.getElementById('recordCard').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function saveVideoBackendUrl(){
+    var value=document.getElementById('videoBackendUrl').value.trim();
+    if(window.RokidGlasses && window.RokidGlasses.setVideoBackendUrl){window.RokidGlasses.setVideoBackendUrl(value);}
+    else if(window.RokidGlasses && window.RokidGlasses.setServerUrl){window.RokidGlasses.setServerUrl(value);}
+}
+function createVideoSession(){
+    try{saveVideoBackendUrl();window.RokidGlasses.createVideoSession();document.getElementById('videoState').textContent='正在创建会话...';}
+    catch(error){document.getElementById('videoState').textContent='创建失败：'+error.message;}
+}
+function openVideoDashboard(){
+    try{saveVideoBackendUrl();window.RokidGlasses.loadVideoDashboard();}
+    catch(error){document.getElementById('videoState').textContent='打开失败：'+error.message;}
+}
+function finishVideoSession(){
+    try{window.RokidGlasses.finishVideoSession();document.getElementById('videoState').textContent='已结束会话';}
+    catch(error){document.getElementById('videoState').textContent='结束失败：'+error.message;}
+}
+function renderVideoFoods(foods){
+    var container=document.getElementById('videoFoods');
+    container.innerHTML='';
+    if(!foods||!foods.length){container.style.display='none';return;}
+    container.style.display='grid';
+    foods.forEach(function(food){
+        var card=document.createElement('div');
+        card.style.cssText='padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card);';
+        var name=food.name||food.record_food_name||'未知食物';
+        var weight=Number(food.estimated_weight_g||food.weight_g||0).toFixed(1);
+        var cal=Number((food.nutrition||{}).calories_kcal||food.calories||0).toFixed(1);
+        var conf=Math.round(Number(food.confidence||0)*100);
+        card.innerHTML='<strong style="font-size:14px;">'+name+'</strong>'+
+            '<div style="font-size:12px;color:var(--text2);margin-top:4px;">'+weight+'g · '+cal+' kcal · 置信度 '+conf+'%</div>';
+        if(food.available_for_record){
+            var btn=document.createElement('button');btn.type='button';btn.className='btn btn-secondary btn-sm';btn.style.marginTop='9px';
+            btn.textContent='填入记录：'+food.record_food_name;
+            btn.addEventListener('click',function(){quickFood(food.record_food_name,Math.max(0.5,Number(food.estimated_weight_g||0).toFixed(1)));});
+            card.appendChild(btn);
+        }
+        container.appendChild(card);
+    });
+}
+function renderVideoIntake(events){
+    var box=document.getElementById('videoIntake');var list=document.getElementById('videoIntakeList');
+    if(!events||!events.length){box.style.display='none';return;}
+    box.style.display='block';
+    list.innerHTML=events.map(function(e){
+        var name=e.food_name||'食物';var weight=Number(e.weight_g||0).toFixed(1);var cal=Number(e.calories||0).toFixed(1);
+        return '<div style="margin-bottom:4px;">'+name+' '+weight+'g · '+cal+' kcal</div>';
+    }).join('');
+}
+function updateVideoState(rawPayload){
+    var payload=typeof rawPayload==='string'?JSON.parse(rawPayload):rawPayload;
+    var state=payload.state||payload||{};
+    document.getElementById('videoResult').style.display='block';
+    document.getElementById('videoState').textContent=state.guidance&&state.guidance.message?state.guidance.message:'视频会话运行中';
+    renderVideoFoods(state.foods);renderVideoIntake(state.intake_events);
+    var quality=state.measurement_quality&&state.measurement_quality.overall!==undefined?state.measurement_quality.overall:0;
+    var guidance=state.guidance&&state.guidance.needed_action?' · 建议：'+state.guidance.needed_action:'';
+    document.getElementById('videoGuidance').textContent='已分析 '+(state.analyzed_frame_count||0)+' 帧 · 画面质量 '+Math.round(Number(quality)*100)+'%'+guidance;
+    lucide.createIcons();
+}
+function handleVideoEvent(rawPayload){
+    var payload=typeof rawPayload==='string'?JSON.parse(rawPayload):rawPayload;
+    if(payload.event==='frame_analyzed'&&payload.state){updateVideoState(payload);}
+    else if(payload.event==='intake_detected'){
+        updateVideoState({state:{foods:payload.foods||[],intake_events:payload.intake_events||[],guidance:payload.guidance}});
+        document.getElementById('videoState').textContent='检测到进食事件';
+    }
+}
+window.RokidGlassesEvents={
+    onVideoState:function(rawPayload){try{updateVideoState(rawPayload);}catch(error){document.getElementById('videoState').textContent=error.message;}},
+    onVideoEvent:function(rawPayload){try{handleVideoEvent(rawPayload);}catch(error){document.getElementById('videoState').textContent=error.message;}},
+    onError:function(message){document.getElementById('videoState').textContent=message;}
+};
+if(window.RokidGlasses){
+    document.getElementById('videoControls').style.display='block';
+    var videoUrl='';
+    if(window.RokidGlasses.getVideoBackendUrl){videoUrl=window.RokidGlasses.getVideoBackendUrl();}
+    else if(window.RokidGlasses.getServerUrl){videoUrl=window.RokidGlasses.getServerUrl();}
+    document.getElementById('videoBackendUrl').value=videoUrl;
+}
+if(location.search.indexOf('debug=rokid')!==-1){
+    window.RokidGlasses={
+        createVideoSession:function(){console.log('[mock] createVideoSession');document.getElementById('videoState').textContent='[调试] 已调用 createVideoSession';},
+        loadVideoDashboard:function(){console.log('[mock] loadVideoDashboard');window.open('https://10.72.14.153:8000/?session_id=demo','_blank');},
+        finishVideoSession:function(){console.log('[mock] finishVideoSession');document.getElementById('videoState').textContent='[调试] 已调用 finishVideoSession';},
+        getVideoBackendUrl:function(){return 'https://10.72.14.153:8000';},
+        setVideoBackendUrl:function(u){console.log('[mock] setVideoBackendUrl',u);}
+    };
+    document.getElementById('videoControls').style.display='block';
+    document.getElementById('videoBackendUrl').value='https://10.72.14.153:8000';
+    document.getElementById('videoState').textContent='调试模式：点击按钮会在控制台输出模拟调用';
 }
 </script>
 {% endblock %}

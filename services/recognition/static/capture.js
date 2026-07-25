@@ -11,7 +11,7 @@ const capture = {
   stateTimer: null,
   running: false,
   uploading: false,
-  frameIntervalMs: 520,
+  frameIntervalMs: 150,
   retryDelayMs: 900,
   sentFrames: 0,
   failedFrames: 0,
