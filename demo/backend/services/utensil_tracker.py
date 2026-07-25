@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+import threading
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -10,6 +14,13 @@ try:
     import cv2
 except Exception:  # pragma: no cover - exercised only in minimal runtimes.
     cv2 = None
+
+
+DEFAULT_UTENSIL_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "utensil_det_v1.pt"
+_model_lock = threading.Lock()
+_model_attempted = False
+_model: Any | None = None
+_model_name = "opencv-fallback"
 
 
 @dataclass(frozen=True)
@@ -25,13 +36,109 @@ class UtensilObservation:
 
 
 def detect_utensils(rgb: np.ndarray, foods: list[FoodTrack]) -> list[UtensilObservation]:
-    """Lightweight MVP detector for long, bright utensil-like shapes.
-
-    This is intentionally conservative: it only emits candidates. Dedicated
-    utensil models can replace this module without changing downstream schemas.
-    """
+    """Detect utensils with the deployed YOLO model, then fall back to OpenCV."""
     if rgb.size == 0:
         return []
+    model = _load_model()
+    if model is not None:
+        try:
+            observations = _detect_with_model(model, rgb, foods)
+            if observations:
+                return observations
+        except Exception:
+            # Camera streaming and food recognition must continue even when an
+            # optional accelerator/model runtime fails on a particular frame.
+            pass
+    return _detect_with_opencv(rgb, foods)
+
+
+def detector_name() -> str:
+    _load_model()
+    return _model_name
+
+
+def _load_model() -> Any | None:
+    global _model_attempted, _model, _model_name
+    if _model_attempted:
+        return _model
+    with _model_lock:
+        if _model_attempted:
+            return _model
+        _model_attempted = True
+        if os.getenv("UTENSIL_MODEL_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
+            _model_name = "opencv-fallback (disabled)"
+            return None
+        model_path = Path(os.getenv("UTENSIL_MODEL_PATH", str(DEFAULT_UTENSIL_MODEL_PATH)))
+        if not model_path.is_file():
+            _model_name = "opencv-fallback (model-missing)"
+            return None
+        try:
+            from ultralytics import YOLO  # type: ignore
+
+            _model = YOLO(str(model_path))
+            _model_name = model_path.name
+        except Exception as exc:  # pragma: no cover - optional runtime path
+            _model = None
+            _model_name = f"opencv-fallback ({exc.__class__.__name__})"
+        return _model
+
+
+def _detect_with_model(
+    model: Any,
+    rgb: np.ndarray,
+    foods: list[FoodTrack],
+) -> list[UtensilObservation]:
+    height, width = rgb.shape[:2]
+    confidence_threshold = float(os.getenv("UTENSIL_MODEL_CONFIDENCE", "0.25"))
+    result = model.predict(rgb, imgsz=640, conf=confidence_threshold, verbose=False)[0]
+    boxes = getattr(result, "boxes", None)
+    if boxes is None:
+        return []
+    names = getattr(result, "names", {}) or {}
+    observations: list[UtensilObservation] = []
+    for index, box in enumerate(boxes):
+        xyxy = box.xyxy[0].tolist()
+        bbox = [
+            int(max(0, xyxy[0])),
+            int(max(0, xyxy[1])),
+            int(min(width, xyxy[2])),
+            int(min(height, xyxy[3])),
+        ]
+        if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+            continue
+        class_id = int(box.cls[0].item()) if getattr(box, "cls", None) is not None else -1
+        raw_label = str(names.get(class_id, "unknown")).strip().lower()
+        utensil_type = _normalise_utensil_type(raw_label)
+        confidence = float(box.conf[0].item()) if getattr(box, "conf", None) is not None else 0.5
+        contact_id, carried_area = _contact_food(bbox, foods)
+        observations.append(
+            UtensilObservation(
+                utensil_id=f"utensil_{index + 1}",
+                utensil_type=utensil_type,
+                bbox=bbox,
+                confidence=round(min(1.0, confidence), 3),
+                tip_point=[float(bbox[2]), float((bbox[1] + bbox[3]) / 2)],
+                contact_food_track_id=contact_id,
+                carried_food_area_px=carried_area,
+            )
+        )
+    observations.sort(key=lambda item: item.confidence, reverse=True)
+    return observations[:5]
+
+
+def _normalise_utensil_type(label: str) -> str:
+    if "chopstick" in label or "筷" in label:
+        return "chopsticks"
+    if "spoon" in label or "勺" in label:
+        return "spoon"
+    if "fork" in label or "叉" in label:
+        return "fork"
+    if "hand" in label or "手" in label:
+        return "hand"
+    return "unknown"
+
+
+def _detect_with_opencv(rgb: np.ndarray, foods: list[FoodTrack]) -> list[UtensilObservation]:
     if cv2 is None:
         return []
     height, width = rgb.shape[:2]

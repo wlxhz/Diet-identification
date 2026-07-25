@@ -1,5 +1,6 @@
-_# Python
+# Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 
@@ -31,7 +32,21 @@ Thumbs.db
 # Raw annotation data from AnyLabeling
 Camera_*/
 
-# Training packs and datasets
+# Android build outputs and local machine configuration
+health_diet_app/android/.gradle/
+health_diet_app/android/**/build/
+rokid_glasses_streamer/local.properties
+rokid_glasses_streamer/.gradle/
+rokid_glasses_streamer/**/build/
+**/local.properties
+*.aab
+
+# Rokid runtime logs and local captures
+*.log
+*logcat*.txt
+rokid_camera_link_demo/static/uploads/
+
+# Training packs, data and outputs
 *.zip
 datasets/
 training/utensil/datasets/
@@ -39,5 +54,6 @@ training/food/datasets/
 training/runs/
 
 # Test outputs
+.browser-smoke.png
 demo/scripts/assets/
 *_result.jpg

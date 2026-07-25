@@ -13,13 +13,13 @@
         <div class="brand-lockup">
           <span class="brand-mark" aria-hidden="true"></span>
           <div>
-            <p class="kicker">OPTICAL RELAY / 01</p>
+            <p class="kicker">OPTICAL STREAM / 01</p>
             <h1>Rokid Camera Link</h1>
           </div>
         </div>
         <div id="connectionBadge" class="connection-badge waiting">
           <span class="signal-dot"></span>
-          <span id="connectionText">等待眼镜画面</span>
+          <span id="connectionText">等待眼镜视频流</span>
         </div>
       </header>
 
@@ -27,16 +27,16 @@
         <article class="stage-card">
           <div class="stage-header">
             <span>LIVE VIEW</span>
-            <span id="frameCounter">FRAME —</span>
+            <span id="frameCounter">FRAME -</span>
           </div>
           <div class="video-stage">
-            <img id="liveFrame" alt="Rokid 摄像头实时画面" hidden />
+            <img id="liveFrame" alt="Rokid 眼镜实时视频" hidden />
             <div id="emptyState" class="empty-state">
               <div class="reticle" aria-hidden="true">
                 <i></i><i></i><i></i><i></i>
               </div>
-              <p class="empty-title">NO OPTICAL SIGNAL</p>
-              <p>打开采集端并允许摄像头后，画面将显示在这里。</p>
+              <p class="empty-title">NO VIDEO SIGNAL</p>
+              <p>UDP 5000 · MPEG-TS / H.264</p>
             </div>
             <div class="scanline" aria-hidden="true"></div>
             <span class="corner top-left"></span>
@@ -45,44 +45,62 @@
             <span class="corner bottom-right"></span>
           </div>
           <footer class="stage-footer">
-            <span id="resolutionValue">0 × 0</span>
-            <span>JPEG RELAY</span>
+            <span id="resolutionValue">NO SIGNAL</span>
+            <span>H.264 / MPEG-TS</span>
             <span id="clockValue">--:--:--</span>
           </footer>
         </article>
 
         <aside class="telemetry">
           <section class="panel link-panel">
-            <p class="panel-label">CAPTURE ENDPOINT</p>
-            <h2>连接采集端</h2>
-            <p class="panel-copy">
-              让眼镜或中转设备与电脑处于同一局域网，然后打开下面的地址。
-            </p>
+            <p class="panel-label">STREAM TARGET</p>
+            <h2>眼镜推流目标</h2>
             <label class="endpoint-field">
               <span>地址</span>
-              <input id="captureUrl" readonly />
+              <input id="streamUrl" value="udp://&lt;computer-ip&gt;:5000" readonly />
             </label>
-            <button id="copyButton" type="button">复制采集地址</button>
-            <p id="copyFeedback" class="microcopy">手机可先用于验证电脑接收端。</p>
+            <button id="copyButton" type="button">复制推流目标</button>
+            <p id="copyFeedback" class="microcopy">电脑与眼镜需处于同一局域网</p>
           </section>
 
           <section class="panel metrics-panel">
-            <p class="panel-label">LINK TELEMETRY</p>
+            <p class="panel-label">STREAM TELEMETRY</p>
             <div class="metric-list">
               <div class="metric">
-                <span>链路延迟</span>
-                <strong id="latencyValue">—</strong>
-                <small>ms</small>
-              </div>
-              <div class="metric">
-                <span>接收速率</span>
+                <span>解码帧率</span>
                 <strong id="fpsValue">0.0</strong>
                 <small>fps</small>
               </div>
               <div class="metric">
-                <span>图片大小</span>
-                <strong id="sizeValue">—</strong>
-                <small>KB</small>
+                <span>接收速率</span>
+                <strong id="receiveFpsValue">0.0</strong>
+                <small>pkt/s</small>
+              </div>
+              <div class="metric">
+                <span>帧龄</span>
+                <strong id="latencyValue">-</strong>
+                <small>ms</small>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel metrics-panel">
+            <p class="panel-label">LATEST-ONLY BUFFER</p>
+            <div class="metric-list">
+              <div class="metric">
+                <span>已解码</span>
+                <strong id="decodedValue">0</strong>
+                <small>frames</small>
+              </div>
+              <div class="metric">
+                <span>已覆盖</span>
+                <strong id="replacedValue">0</strong>
+                <small>frames</small>
+              </div>
+              <div class="metric">
+                <span>解码错误</span>
+                <strong id="errorValue">0</strong>
+                <small>events</small>
               </div>
             </div>
           </section>
@@ -90,15 +108,15 @@
           <section class="panel device-panel">
             <p class="panel-label">SOURCE</p>
             <dl>
-              <div><dt>设备</dt><dd id="deviceValue">尚未连接</dd></div>
-              <div><dt>来源 IP</dt><dd id="ipValue">—</dd></div>
-              <div><dt>最后接收</dt><dd id="receivedValue">—</dd></div>
+              <div><dt>设备</dt><dd id="deviceValue">Rokid RV101</dd></div>
+              <div><dt>监听</dt><dd id="ipValue">UDP :5000</dd></div>
+              <div><dt>最后解码</dt><dd id="receivedValue">-</dd></div>
             </dl>
           </section>
 
           <section class="panel diagnostic-panel">
             <p class="panel-label">DIAGNOSTIC</p>
-            <p id="diagnosticText">服务器已就绪，正在等待第一张 JPEG 图片。</p>
+            <p id="diagnosticText">监听已就绪，等待 MPEG-TS / H.264 数据</p>
           </section>
         </aside>
       </section>

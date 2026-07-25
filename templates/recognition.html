@@ -6,7 +6,7 @@
     <span class="hero-icon"><i data-lucide="scan-eye" style="width:40px;height:40px;"></i></span>
     <div class="greeting">食物识别</div>
     <h1>智能识别食物</h1>
-    <p class="subtitle">Rokid Glasses RV101 · 图片识别 · 确认后添加到我的饮食</p>
+    <p class="subtitle">Rokid Glasses RV101 · 连续视频识别 · 确认后添加到我的饮食</p>
 </div>
 {% endblock %}
 
@@ -16,21 +16,29 @@
 
     <div class="card" style="text-align:center;">
         <h2><i data-lucide="scan-eye" class="icon-md"></i>Rokid 食物识别</h2>
-        <p style="color:var(--text2);font-size:13px;margin-bottom:16px;">通过 Rokid AI App 与 CXR-L 配对 RV101，照片只来自眼镜摄像头。系统会将眼镜 JPEG 发送到电脑识别服务，结果仅作参考，保存前请确认。</p>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:16px;">通过 Rokid AI App 与 CXR-L 配对 RV101。眼镜端持续编码 H.264 视频，目标 1280×720、30 FPS，并通过 Wi-Fi 直接发送到电脑；手机只负责安装、启动与控制，不再逐张拍照或上传 JPEG。</p>
 
         <div id="rokidControls" style="display:none;max-width:620px;margin:0 auto 18px;text-align:left;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--green-lighter);">
             <div style="font-weight:700;margin-bottom:10px;"><i data-lucide="glasses" class="icon-sm"></i> Rokid Glasses RV101</div>
             <div class="form-group" style="margin-bottom:10px;">
-                <label>电脑识别服务地址</label>
+                <label>电脑视频接收与识别服务地址</label>
                 <input id="rokidServerUrl" type="url" inputmode="url" placeholder="http://192.168.1.100:9088">
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:8px;">
                 <button class="btn btn-primary btn-sm" type="button" onclick="connectRokid()"><i data-lucide="bluetooth" class="icon-sm"></i> 授权并连接眼镜</button>
-                <button class="btn btn-secondary btn-sm" type="button" id="rokidCaptureButton" onclick="captureRokid()" disabled><i data-lucide="camera" class="icon-sm"></i> 眼镜拍照</button>
-                <button class="btn btn-secondary btn-sm" type="button" id="rokidStartButton" onclick="startRokidScan()" disabled><i data-lucide="play" class="icon-sm"></i> 开始低频采集</button>
-                <button class="btn btn-secondary btn-sm" type="button" id="rokidStopButton" onclick="stopRokidScan()" disabled><i data-lucide="square" class="icon-sm"></i> 停止</button>
+                <button class="btn btn-secondary btn-sm" type="button" id="rokidEnsureButton" onclick="ensureRokidStreamer()" disabled><i data-lucide="search-check" class="icon-sm"></i> 检查推流程序</button>
+                <button class="btn btn-secondary btn-sm" type="button" id="rokidInstallButton" onclick="installRokidStreamer()" disabled><i data-lucide="download" class="icon-sm"></i> 安装到眼镜</button>
+                <button class="btn btn-secondary btn-sm" type="button" id="rokidStartButton" onclick="startRokidStream()" disabled><i data-lucide="video" class="icon-sm"></i> 开始视频流</button>
+                <button class="btn btn-secondary btn-sm" type="button" id="rokidStopButton" onclick="stopRokidStream()" disabled><i data-lucide="square" class="icon-sm"></i> 停止视频流</button>
+                <button class="btn btn-secondary btn-sm" type="button" id="rokidStatusButton" onclick="requestRokidStatus()" disabled><i data-lucide="refresh-cw" class="icon-sm"></i> 刷新状态</button>
             </div>
             <div id="rokidState" style="font-size:12px;color:var(--text2);margin-top:10px;">等待连接 Rokid AI App</div>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px;">
+                <div style="padding:9px;border-radius:10px;background:var(--surface,#fff);text-align:center;"><strong id="rokidActualFps">--</strong><div style="font-size:10px;color:var(--text3);">实际 FPS</div></div>
+                <div style="padding:9px;border-radius:10px;background:var(--surface,#fff);text-align:center;"><strong id="rokidResolution">--</strong><div style="font-size:10px;color:var(--text3);">视频分辨率</div></div>
+                <div style="padding:9px;border-radius:10px;background:var(--surface,#fff);text-align:center;"><strong id="rokidReceiverState">未接收</strong><div style="font-size:10px;color:var(--text3);">电脑接收状态</div></div>
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:8px;">实际 FPS 来自眼镜编码端或电脑接收端统计；配置为 30 FPS 不代表真机已经达到 30 FPS。</div>
         </div>
 
         <div id="cameraArea">
@@ -39,7 +47,7 @@
                 <div class="corner bl"></div><div class="corner br"></div>
                 <div class="scan-line"></div>
                 <img id="scanPreview" alt="待识别食物预览" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:inherit;">
-                <div class="vf-text" id="viewfinderText">让餐盘完整入镜，保持光线充足</div>
+                <div class="vf-text" id="viewfinderText">启动 RV101 视频流后，这里显示电脑接收的最新画面</div>
             </div>
             <input id="scanFile" type="file" accept="image/jpeg,image/png,image/webp" hidden>
             <button class="btn btn-primary btn-lg" type="button" id="scanButton" onclick="document.getElementById('scanFile').click()" style="margin-top:16px;">
@@ -158,12 +166,20 @@ function handleRecognitionPayload(payload) {
     renderRecognizedFoods(payload.foods);
 }
 
-function prepareRokidScan(message) {
+var rokidPollingTimer = null;
+var rokidPollingBusy = false;
+var latestAnalysisIdentity = '';
+
+function parseJson(value) {
+    return typeof value === 'string' ? JSON.parse(value) : value;
+}
+
+function prepareVideoStream() {
     document.getElementById('scanResult').style.display = 'block';
     document.getElementById('scanSpinner').style.display = 'block';
-    document.getElementById('scanStatus').textContent = '等待 RV101 照片...';
+    document.getElementById('scanStatus').textContent = '等待 RV101 视频流...';
     document.getElementById('scanStatus').style.color = 'var(--text2)';
-    document.getElementById('scanText').textContent = message;
+    document.getElementById('scanText').textContent = '电脑将全速接收视频，并始终从最新帧抽样进行食物识别';
     document.getElementById('scanProgress').style.width = '45%';
     document.getElementById('recognizedFoods').innerHTML = '';
     lucide.createIcons();
@@ -174,6 +190,11 @@ function saveRokidServer() {
     if (!window.RokidGlasses.setServerUrl(value)) {
         throw new Error('请输入完整地址，例如 http://192.168.1.100:9088');
     }
+    return value.replace(/\/+$/, '');
+}
+
+function computerEndpoint(path) {
+    return document.getElementById('rokidServerUrl').value.trim().replace(/\/+$/, '') + path;
 }
 
 function connectRokid() {
@@ -185,41 +206,156 @@ function connectRokid() {
     }
 }
 
-function captureRokid() {
-    prepareRokidScan('正在通过 CXR-L 请求眼镜拍照');
-    window.RokidGlasses.capture();
+function ensureRokidStreamer() {
+    window.RokidGlasses.ensure();
 }
 
-function startRokidScan() {
-    prepareRokidScan('每 1.2 秒从眼镜获取一张照片并持续修正结果');
-    window.RokidGlasses.startAutoCapture(1200);
+function installRokidStreamer() {
+    window.RokidGlasses.install();
 }
 
-function stopRokidScan() {
-    window.RokidGlasses.stopAutoCapture();
+function startRokidStream() {
+    try {
+        var serverUrl = saveRokidServer();
+        prepareVideoStream();
+        startComputerPolling();
+        window.RokidGlasses.start(serverUrl);
+    } catch (error) {
+        stopComputerPolling();
+        showScanError(error.message);
+    }
+}
+
+function stopRokidStream() {
+    stopComputerPolling();
+    window.RokidGlasses.stop();
+    document.getElementById('rokidReceiverState').textContent = '已停止';
+}
+
+function requestRokidStatus() {
+    window.RokidGlasses.status();
+    pollComputerOnce();
+}
+
+function numberFrom(objects, keys) {
+    for (var i = 0; i < objects.length; i++) {
+        var object = objects[i] || {};
+        for (var j = 0; j < keys.length; j++) {
+            var value = Number(object[keys[j]]);
+            if (Number.isFinite(value)) return value;
+        }
+    }
+    return null;
+}
+
+function isReceiving(status, metrics) {
+    return Boolean(
+        status.streamConnected || status.has_frame || status.hasFrame ||
+        status.receiving || status.streaming || status.frame_available ||
+        metrics.streamConnected || metrics.has_frame || metrics.hasFrame ||
+        metrics.receiving || metrics.streaming || metrics.frame_available
+    );
+}
+
+function updateStreamerMetrics(status) {
+    status = status || {};
+    var metrics = status.metrics || status.stream || status.video || {};
+    var actualFps = numberFrom(
+        [status, metrics],
+        ['actualFps', 'inputFps', 'receiveFps', 'decodeFps', 'actual_fps', 'input_fps', 'receive_fps', 'decode_fps', 'fps']
+    );
+    if (actualFps !== null) {
+        document.getElementById('rokidActualFps').textContent = actualFps.toFixed(1);
+    }
+    var width = numberFrom([status, metrics], ['width', 'frameWidth', 'frame_width']);
+    var height = numberFrom([status, metrics], ['height', 'frameHeight', 'frame_height']);
+    if (width && height) {
+        document.getElementById('rokidResolution').textContent = width + '×' + height;
+    }
+    var receiving = isReceiving(status, metrics);
+    document.getElementById('rokidReceiverState').textContent = receiving ? '正在接收' : '等待视频';
+    return receiving;
 }
 
 function updateRokidState(rawState) {
-    var state = typeof rawState === 'string' ? JSON.parse(rawState) : rawState;
+    var state = parseJson(rawState);
+    var streamStatus = state.streamer_status || {};
+    var streaming = Boolean(state.streaming || streamStatus.state === 'streaming');
     document.getElementById('rokidState').textContent = state.message || '眼镜状态已更新';
-    document.getElementById('rokidCaptureButton').disabled = !state.ready;
-    document.getElementById('rokidStartButton').disabled = !state.ready || state.auto_capture;
-    document.getElementById('rokidStopButton').disabled = !state.auto_capture;
+    document.getElementById('rokidEnsureButton').disabled = !state.control_ready;
+    document.getElementById('rokidInstallButton').disabled =
+        !state.control_ready || !state.streamer_apk_embedded || state.streamer_installing;
+    document.getElementById('rokidStartButton').disabled =
+        !state.control_ready || !state.streamer_installed || streaming;
+    document.getElementById('rokidStopButton').disabled = !state.control_ready || !streaming;
+    document.getElementById('rokidStatusButton').disabled = !state.control_ready || !state.streamer_installed;
+    updateStreamerMetrics(streamStatus);
+    if (streaming) startComputerPolling();
+}
+
+function analysisIdentity(payload) {
+    return String(
+        payload.frame_sequence || payload.analyzed_at_ms || payload.analysis_id ||
+        payload.frame_id || payload.timestamp || payload.updated_at || JSON.stringify(payload)
+    );
+}
+
+async function pollComputerOnce() {
+    if (rokidPollingBusy) return;
+    rokidPollingBusy = true;
+    try {
+        var statusResponse = await fetch(computerEndpoint('/api/status'), {cache:'no-store'});
+        if (!statusResponse.ok) throw new Error('电脑视频服务返回 ' + statusResponse.status);
+        var status = await statusResponse.json();
+        if (updateStreamerMetrics(status)) {
+            var preview = document.getElementById('scanPreview');
+            preview.src = computerEndpoint('/api/frame.jpg') + '?t=' + Date.now();
+            preview.style.display = 'block';
+            document.getElementById('viewfinderText').style.display = 'none';
+        }
+
+        var analysisResponse = await fetch(computerEndpoint('/api/analysis/latest'), {cache:'no-store'});
+        if (analysisResponse.ok) {
+            var response = await analysisResponse.json();
+            if (response && response.ok && response.has_analysis && response.analysis) {
+                var identity = analysisIdentity(response);
+                if (identity !== latestAnalysisIdentity) {
+                    latestAnalysisIdentity = identity;
+                    handleRecognitionPayload(Object.assign({ok: true}, response.analysis));
+                }
+            }
+        }
+    } catch (error) {
+        document.getElementById('rokidReceiverState').textContent = '无法连接';
+        document.getElementById('scanText').textContent = error.message || '无法连接电脑视频服务';
+    } finally {
+        rokidPollingBusy = false;
+    }
+}
+
+function startComputerPolling() {
+    if (rokidPollingTimer) return;
+    pollComputerOnce();
+    rokidPollingTimer = window.setInterval(pollComputerOnce, 700);
+}
+
+function stopComputerPolling() {
+    if (rokidPollingTimer) window.clearInterval(rokidPollingTimer);
+    rokidPollingTimer = null;
+    rokidPollingBusy = false;
 }
 
 window.RokidGlassesEvents = {
     onState: function(rawState) {
-        try { updateRokidState(rawState); } catch (error) { showScanError(error.message); }
-    },
-    onFrame: function(dataUrl) {
-        var preview = document.getElementById('scanPreview');
-        preview.src = dataUrl;
-        preview.style.display = 'block';
-        document.getElementById('viewfinderText').style.display = 'none';
-    },
-    onAnalysis: function(rawPayload) {
-        try { handleRecognitionPayload(JSON.parse(rawPayload)); }
+        try { updateRokidState(rawState); }
         catch (error) { showScanError(error.message); }
+    },
+    onStreamerStatus: function(rawStatus) {
+        try {
+            var status = parseJson(rawStatus);
+            updateStreamerMetrics(status);
+            if (status.state === 'streaming') startComputerPolling();
+        } catch (error) { showScanError(error.message); }
     },
     onError: function(message) {
         document.getElementById('rokidState').textContent = message;
@@ -229,10 +365,12 @@ window.RokidGlassesEvents = {
 
 if (window.RokidGlasses) {
     document.getElementById('rokidControls').style.display = 'block';
-    document.getElementById('cameraArea').querySelector('#scanButton').style.display = 'none';
+    document.getElementById('scanButton').style.display = 'none';
     document.getElementById('rokidServerUrl').value = window.RokidGlasses.getServerUrl();
     try { updateRokidState(window.RokidGlasses.getState()); } catch (error) {}
 }
+
+window.addEventListener('beforeunload', stopComputerPolling);
 
 document.getElementById('scanFile').addEventListener('change', function(event) {
     var file = event.target.files && event.target.files[0];
