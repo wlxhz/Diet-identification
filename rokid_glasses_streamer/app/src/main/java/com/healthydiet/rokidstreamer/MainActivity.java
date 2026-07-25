@@ -37,7 +37,7 @@ public final class MainActivity extends Activity {
         setContentView(createContentView());
         if (hasCameraPermission()) {
             startControlService();
-            requestNotificationPermissionIfNeeded();
+            finishWhenNotificationPermissionHandled();
         } else {
             permissionButton.setVisibility(View.VISIBLE);
             statusView.setText(
@@ -70,12 +70,14 @@ public final class MainActivity extends Activity {
             if (hasCameraPermission()) {
                 permissionButton.setVisibility(View.GONE);
                 startControlService();
-                requestNotificationPermissionIfNeeded();
+                finishWhenNotificationPermissionHandled();
             } else {
                 statusView.setText(
                         "Camera permission was denied. The streaming service is stopped."
                 );
             }
+        } else if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
+            finishAndRemoveTask();
         }
     }
 
@@ -133,7 +135,7 @@ public final class MainActivity extends Activity {
         );
     }
 
-    private void requestNotificationPermissionIfNeeded() {
+    private void finishWhenNotificationPermissionHandled() {
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -141,7 +143,9 @@ public final class MainActivity extends Activity {
                     new String[]{Manifest.permission.POST_NOTIFICATIONS},
                     NOTIFICATION_PERMISSION_REQUEST
             );
+            return;
         }
+        finishAndRemoveTask();
     }
 
     private void startControlService() {

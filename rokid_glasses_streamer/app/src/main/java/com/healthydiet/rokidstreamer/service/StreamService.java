@@ -102,6 +102,7 @@ public final class StreamService extends Service implements CxrBridgeHub.Listene
         createNotificationChannel();
         startAsForeground();
         createPowerLocks();
+        acquireControlWakeLock();
         registerThermalListener();
 
         try {
@@ -150,12 +151,12 @@ public final class StreamService extends Service implements CxrBridgeHub.Listene
         if (worker != null) {
             worker.removeCallbacksAndMessages(null);
             if (Looper.myLooper() == worker.getLooper()) {
-                releaseStreamAndLocks();
+                releaseStreamAndAllLocks();
             } else {
-                worker.post(this::releaseStreamAndLocks);
+                worker.post(this::releaseStreamAndAllLocks);
             }
         } else {
-            releaseStreamAndLocks();
+            releaseStreamAndAllLocks();
         }
         unregisterThermalListener();
         if (workerThread != null) {
@@ -204,8 +205,15 @@ public final class StreamService extends Service implements CxrBridgeHub.Listene
                     publishStatus(true);
                     break;
                 case START:
-                    config = command.config;
-                    startStreaming(config, lastReplyTopic);
+                    if (isStreamActive() && config.equals(command.config)) {
+                        // The phone retries until it receives a status acknowledgement. Treat an
+                        // identical START as idempotent so a delayed screen-off acknowledgement
+                        // cannot repeatedly tear down a healthy camera session.
+                        publishStatus(true);
+                    } else {
+                        config = command.config;
+                        startStreaming(config, lastReplyTopic);
+                    }
                     break;
                 case STOP:
                     stopStreaming(true, "stopped");
@@ -383,10 +391,10 @@ public final class StreamService extends Service implements CxrBridgeHub.Listene
         }
     }
 
-    private void releaseStreamAndLocks() {
+    private void releaseStreamAndAllLocks() {
         stoppingIntentionally = true;
         releaseStreamOnly();
-        releasePowerLocks();
+        releaseAllPowerLocks();
     }
 
     private boolean isStreamActive() {
@@ -473,10 +481,8 @@ public final class StreamService extends Service implements CxrBridgeHub.Listene
     }
 
     private void acquirePowerLocks() {
+        acquireControlWakeLock();
         try {
-            if (wakeLock != null && !wakeLock.isHeld()) {
-                wakeLock.acquire();
-            }
             if (wifiLock != null && !wifiLock.isHeld()) {
                 wifiLock.acquire();
             }
@@ -493,6 +499,20 @@ public final class StreamService extends Service implements CxrBridgeHub.Listene
         } catch (RuntimeException lockError) {
             Log.w(TAG, "Unable to release Wi-Fi lock", lockError);
         }
+    }
+
+    private void acquireControlWakeLock() {
+        try {
+            if (wakeLock != null && !wakeLock.isHeld()) {
+                wakeLock.acquire();
+            }
+        } catch (RuntimeException lockError) {
+            Log.w(TAG, "Unable to acquire control wake lock", lockError);
+        }
+    }
+
+    private void releaseAllPowerLocks() {
+        releasePowerLocks();
         try {
             if (wakeLock != null && wakeLock.isHeld()) {
                 wakeLock.release();

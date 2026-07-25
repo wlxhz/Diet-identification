@@ -59,6 +59,8 @@ public final class MainActivity extends Activity
     private static final int STREAM_HEIGHT = 720;
     private static final int STREAM_FPS = 30;
     private static final int STREAM_BITRATE = 4_000_000;
+    private static final int START_COMMAND_MAX_ATTEMPTS = 12;
+    private static final long START_COMMAND_RETRY_MS = 1_500L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService serverExecutor = Executors.newSingleThreadExecutor();
@@ -75,6 +77,8 @@ public final class MainActivity extends Activity
     private boolean streamerAppOpen;
     private boolean streamerStreaming;
     private boolean streamerApkEmbedded;
+    private boolean streamerLaunchInFlight;
+    private boolean streamerRuntimeReady;
     private JSONObject streamerStatus = new JSONObject();
     private JSONObject pendingStartCommand;
     private JSONObject retryingStartCommand;
@@ -84,7 +88,11 @@ public final class MainActivity extends Activity
     private final Runnable startCommandRetry = new Runnable() {
         @Override
         public void run() {
-            if (retryingStartCommand == null || !streamerAppOpen || !isControlReady()) {
+            if (retryingStartCommand == null) {
+                return;
+            }
+            if (!isCommandTransportReady()) {
+                mainHandler.postDelayed(this, START_COMMAND_RETRY_MS);
                 return;
             }
             startCommandAttempt++;
@@ -92,10 +100,12 @@ public final class MainActivity extends Activity
                     retryingStartCommand,
                     "正在发送眼镜视频流启动指令（第 " + startCommandAttempt + " 次）"
             );
-            if (retryingStartCommand != null && startCommandAttempt < 3) {
-                mainHandler.postDelayed(this, 1500L);
-            } else if (startCommandAttempt >= 3) {
+            if (retryingStartCommand != null
+                    && startCommandAttempt < START_COMMAND_MAX_ATTEMPTS) {
+                mainHandler.postDelayed(this, START_COMMAND_RETRY_MS);
+            } else if (startCommandAttempt >= START_COMMAND_MAX_ATTEMPTS) {
                 retryingStartCommand = null;
+                emitError("眼镜端后台服务未响应。请确认已至少亮屏启动过一次推流程序并授予相机权限");
             }
         }
     };
@@ -119,6 +129,7 @@ public final class MainActivity extends Activity
         public void onInstallAppResult(boolean success) {
             streamerInstalling = false;
             streamerInstalled = success;
+            preferences.edit().putBoolean("streamer_installed", success).apply();
             if (success) {
                 emitState("眼镜端推流程序安装成功");
                 queryStreamerInstalled();
@@ -131,6 +142,8 @@ public final class MainActivity extends Activity
         public void onUnInstallAppResult(boolean success) {
             if (success) {
                 streamerInstalled = false;
+                streamerRuntimeReady = false;
+                preferences.edit().putBoolean("streamer_installed", false).apply();
                 streamerAppOpen = false;
                 streamerStreaming = false;
             }
@@ -139,10 +152,11 @@ public final class MainActivity extends Activity
 
         @Override
         public void onOpenAppResult(boolean success) {
+            streamerLaunchInFlight = false;
             streamerAppOpen = success;
             if (!success) {
-                pendingStartCommand = null;
-                emitError("眼镜端推流程序启动失败");
+                emitError("眼镜端推流程序启动失败；已保留推流请求，将继续尝试后台控制通道");
+                sendPendingStartOrStatus();
                 return;
             }
             emitState("眼镜端推流程序已启动");
@@ -170,10 +184,14 @@ public final class MainActivity extends Activity
         @Override
         public void onQueryAppResult(boolean installed) {
             streamerInstalled = installed;
+            preferences.edit().putBoolean("streamer_installed", installed).apply();
             streamerInstalling = false;
             emitState(installed
                     ? "眼镜端推流程序已安装"
                     : "眼镜端尚未安装推流程序，请点击安装");
+            if (installed) {
+                ensureStreamerRuntime();
+            }
         }
     };
 
@@ -197,6 +215,9 @@ public final class MainActivity extends Activity
                 statusProbeAttempt = 0;
                 streamerStatus = status;
                 streamerInstalled = true;
+                streamerRuntimeReady = true;
+                streamerLaunchInFlight = false;
+                preferences.edit().putBoolean("streamer_installed", true).apply();
                 String streamState = status.optString("state", "");
                 streamerStreaming = "streaming".equals(streamState);
                 boolean startAccepted = "preparing".equals(streamState)
@@ -224,6 +245,7 @@ public final class MainActivity extends Activity
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         preferences = getSharedPreferences("rokid_glasses", MODE_PRIVATE);
+        streamerInstalled = preferences.getBoolean("streamer_installed", false);
         cxrLink = ((RokidApplication) getApplication()).getCxrLink();
         streamerApkEmbedded = hasAsset(STREAMER_ASSET);
         configureCxrCallbacks();
@@ -450,7 +472,11 @@ public final class MainActivity extends Activity
     }
 
     private boolean isControlReady() {
-        return cxrConnected && glassBtConnected && sessionReady;
+        return isCommandTransportReady() && sessionReady;
+    }
+
+    private boolean isCommandTransportReady() {
+        return cxrConnected && glassBtConnected;
     }
 
     private void ensureStreamer() {
@@ -472,6 +498,41 @@ public final class MainActivity extends Activity
             cxrLink.appIsInstalled(glassAppCallback);
         } catch (RuntimeException error) {
             emitError("查询眼镜端推流程序失败：" + error.getMessage());
+        }
+    }
+
+    /**
+     * Starts the glasses-side foreground control service while a screen-bound CXR session is
+     * available. After this one-time bootstrap, commands are delivered directly to that service
+     * and no longer depend on the glasses display or Activity lifecycle.
+     */
+    private void ensureStreamerRuntime() {
+        if (!streamerInstalled
+                || streamerRuntimeReady
+                || streamerAppOpen
+                || streamerLaunchInFlight
+                || !isControlReady()) {
+            return;
+        }
+        try {
+            streamerLaunchInFlight = true;
+            emitState("正在准备眼镜端常驻后台控制服务");
+            cxrLink.appStart(STREAMER_ENTRY, glassAppCallback);
+        } catch (RuntimeException error) {
+            streamerLaunchInFlight = false;
+            emitError("启动眼镜端后台控制服务失败：" + error.getMessage());
+        }
+    }
+
+    private void flushBackgroundControl() {
+        if (!isCommandTransportReady()) {
+            return;
+        }
+        if (pendingStartCommand != null) {
+            sendPendingStartOrStatus();
+        } else if (retryingStartCommand != null) {
+            mainHandler.removeCallbacks(startCommandRetry);
+            mainHandler.post(startCommandRetry);
         }
     }
 
@@ -549,21 +610,18 @@ public final class MainActivity extends Activity
     }
 
     private void startStream(String serverUrl) {
-        if (!isControlReady()) {
-            emitError("眼镜控制会话尚未就绪，请先授权并连接");
-            return;
-        }
-        if (!streamerInstalled) {
-            emitError("眼镜端尚未安装推流程序，请先点击检查并安装");
-            return;
-        }
         try {
             pendingStartCommand = buildStartCommand(serverUrl);
-            if (streamerAppOpen) {
-                sendPendingStartOrStatus();
-            } else {
-                emitState("正在启动眼镜端视频推流程序");
-                cxrLink.appStart(STREAMER_ENTRY, glassAppCallback);
+            if (!streamerInstalled) {
+                emitError("眼镜端尚未安装推流程序，请先亮屏完成一次检查和安装");
+                return;
+            }
+            sendPendingStartOrStatus();
+            if (!isCommandTransportReady()) {
+                emitState("推流请求已保存，正在恢复 Rokid 连接");
+                requestBluetoothThenAuthorize();
+            } else if (!streamerRuntimeReady && sessionReady) {
+                ensureStreamerRuntime();
             }
         } catch (Exception error) {
             pendingStartCommand = null;
@@ -578,8 +636,8 @@ public final class MainActivity extends Activity
             retryingStartCommand = command;
             startCommandAttempt = 0;
             mainHandler.removeCallbacks(startCommandRetry);
-            mainHandler.postDelayed(startCommandRetry, 1000L);
-        } else if (streamerAppOpen && retryingStartCommand == null) {
+            mainHandler.post(startCommandRetry);
+        } else if (isCommandTransportReady() && retryingStartCommand == null) {
             statusProbeAttempt = 0;
             mainHandler.removeCallbacks(statusProbeRetry);
             mainHandler.postDelayed(statusProbeRetry, 1000L);
@@ -617,8 +675,8 @@ public final class MainActivity extends Activity
     }
 
     private void sendStreamCommand(JSONObject command, String message) {
-        if (!isControlReady()) {
-            emitError("眼镜控制会话不可用，无法发送推流指令");
+        if (!isCommandTransportReady()) {
+            emitState("眼镜传输链路暂不可用，推流指令将在重连后发送");
             return;
         }
         try {
@@ -639,6 +697,7 @@ public final class MainActivity extends Activity
             state.put("glass_bt_connected", glassBtConnected);
             state.put("session_ready", sessionReady);
             state.put("control_ready", isControlReady());
+            state.put("background_control_ready", isCommandTransportReady());
             state.put("streamer_apk_embedded", streamerApkEmbedded);
             state.put("streamer_installed", streamerInstalled);
             state.put("streamer_installing", streamerInstalling);
@@ -694,6 +753,9 @@ public final class MainActivity extends Activity
             streamerAppOpen = false;
         }
         emitState(connected ? "CXR-L 服务已连接" : "CXR-L 服务已断开");
+        if (connected) {
+            flushBackgroundControl();
+        }
     }
 
     @Override
@@ -704,6 +766,9 @@ public final class MainActivity extends Activity
             streamerAppOpen = false;
         }
         emitState(connected ? "RV101 蓝牙已连接" : "RV101 蓝牙未连接");
+        if (connected) {
+            flushBackgroundControl();
+        }
     }
 
     @Override
@@ -751,8 +816,9 @@ public final class MainActivity extends Activity
     public void onSessionPause(CxrDefs.CXRSessionReason reason) {
         sessionReady = false;
         emitState(reason == CxrDefs.CXRSessionReason.SESSION_SCREEN_OFF
-                ? "眼镜已熄屏；眼镜端前台服务会继续推流，控制通道将在唤醒后恢复"
+                ? "眼镜已熄屏；后台控制服务保持在线，可继续启动、停止和查询推流"
                 : "眼镜自定义应用会话暂停：" + reason);
+        flushBackgroundControl();
     }
 
     @Override
